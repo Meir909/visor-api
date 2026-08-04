@@ -1,0 +1,8 @@
+type: string
+description: Тип аналитического снапшота (см. таблицу `analytics_snapshots`).
+enum:
+  - DAILY_REVENUE
+  - HOURLY_OCCUPANCY
+  - CONVERSION
+  - POPULAR_RESOURCES
+  - PEAK_HOURS

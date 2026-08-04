@@ -1,0 +1,39 @@
+type: object
+description: Точка серии выручки за бакет времени.
+required:
+  - periodStart
+  - periodEnd
+  - revenue
+  - bookings
+  - avgCheck
+properties:
+  periodStart:
+    type: string
+    format: date-time
+    description: Начало бакета (inclusive).
+    example: '2026-07-31T00:00:00Z'
+  periodEnd:
+    type: string
+    format: date-time
+    description: Конец бакета (exclusive).
+    example: '2026-08-01T00:00:00Z'
+  revenue:
+    type: string
+    description: Выручка за бакет в minor units валюты (строка без плавающей точки).
+    example: '1250000'
+  refunds:
+    type: string
+    description: Возвраты за бакет в minor units.
+    example: '85000'
+  bookings:
+    type: integer
+    description: Количество завершённых бронирований в бакете.
+    example: 42
+  cancelledBookings:
+    type: integer
+    description: Количество отменённых бронирований.
+    example: 3
+  avgCheck:
+    type: string
+    description: Средний чек в minor units.
+    example: '29761'

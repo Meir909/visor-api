@@ -1,0 +1,53 @@
+type: object
+description: Ресурс в топе популярности за период.
+required:
+  - rank
+  - resourceId
+  - name
+  - bookings
+  - occupiedHours
+  - revenue
+properties:
+  rank:
+    type: integer
+    minimum: 1
+    description: Позиция в топе (1 — самый популярный).
+    example: 1
+  resourceId:
+    type: string
+    format: uuid
+    description: Стабильный идентификатор ресурса (компьютер/VIP).
+    example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  name:
+    type: string
+    description: Отображаемое имя ресурса (например `PC 12`).
+    example: PC 12
+  zoneId:
+    type: [string, 'null']
+    format: uuid
+    description: Зона ресурса или null.
+    example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+  zoneName:
+    type: [string, 'null']
+    description: Имя зоны ресурса или null.
+    example: VIP Zone 2
+  bookings:
+    type: integer
+    description: Количество бронирований ресурса за период.
+    example: 87
+  occupiedHours:
+    type: number
+    format: double
+    description: Занятые ресурсо-часы за период.
+    example: 312.5
+  revenue:
+    type: string
+    description: Выручка ресурса за период в minor units валюты.
+    example: '4217500'
+  occupancyRate:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Доля занятых ресурсо-часов (0..1).
+    example: 0.81

@@ -471,3 +471,45 @@ ZoneTypeQuery:
   schema:
     $ref: '../schemas/ZoneType.yaml'
   example: VIP
+
+AnalyticsFrom:
+  name: from
+  in: query
+  required: true
+  description: Начало периода аналитики (inclusive), ISO 8601 UTC. Диапазон ограничен ретенцией агрегатов.
+  schema:
+    type: string
+    format: date-time
+  example: '2026-07-04T00:00:00Z'
+
+AnalyticsTo:
+  name: to
+  in: query
+  required: true
+  description: Конец периода аналитики (exclusive), ISO 8601 UTC.
+  schema:
+    type: string
+    format: date-time
+  example: '2026-08-04T00:00:00Z'
+
+Granularity:
+  name: granularity
+  in: query
+  required: false
+  description: Гранулярность агрегации серии. По умолчанию `DAY`.
+  schema:
+    $ref: '../schemas/Granularity.yaml'
+    default: DAY
+  example: DAY
+
+AnalyticsLimit:
+  name: limit
+  in: query
+  required: false
+  description: Ограничение количества элементов (топ ресурсов). По умолчанию 10, максимум 50.
+  schema:
+    type: integer
+    minimum: 1
+    maximum: 50
+    default: 10
+  example: 10

@@ -1,0 +1,13 @@
+type: object
+description: Топ популярных ресурсов за период.
+required:
+  - source
+  - items
+properties:
+  source:
+    $ref: './AnalyticsSource.yaml'
+  items:
+    type: array
+    description: Ресурсы, упорядоченные по популярности (rank 1..N).
+    items:
+      $ref: './PopularResource.yaml'

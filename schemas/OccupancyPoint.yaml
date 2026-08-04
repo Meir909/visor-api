@@ -1,0 +1,51 @@
+type: object
+description: Точка серии загрузки за бакет времени.
+required:
+  - periodStart
+  - periodEnd
+  - occupiedHours
+  - availableHours
+  - totalHours
+  - occupancyRate
+  - resourcesTotal
+properties:
+  periodStart:
+    type: string
+    format: date-time
+    description: Начало бакета (inclusive).
+    example: '2026-07-31T00:00:00Z'
+  periodEnd:
+    type: string
+    format: date-time
+    description: Конец бакета (exclusive).
+    example: '2026-08-01T00:00:00Z'
+  occupiedHours:
+    type: number
+    format: double
+    description: Занятые ресурсо-часы за бакет.
+    example: 182.5
+  availableHours:
+    type: number
+    format: double
+    description: Свободные ресурсо-часы за бакет.
+    example: 250
+  totalHours:
+    type: number
+    format: double
+    description: Суммарные ресурсо-часы (занятые + свободные).
+    example: 432.5
+  occupancyRate:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Доля занятых ресурсо-часов (0..1).
+    example: 0.42
+  resourcesInUse:
+    type: integer
+    description: Среднее число ресурсов, занятых в бакете.
+    example: 9
+  resourcesTotal:
+    type: integer
+    description: Среднее число активных ресурсов в периоде.
+    example: 24

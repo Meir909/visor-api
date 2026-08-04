@@ -1,0 +1,27 @@
+type: object
+description: Метаданные проекции агрегатов, по которой построен ответ.
+required:
+  - snapshotType
+  - granularity
+  - sourceWatermark
+  - calculationVersion
+properties:
+  snapshotType:
+    $ref: './AnalyticsSnapshotType.yaml'
+  granularity:
+    $ref: './Granularity.yaml'
+  sourceWatermark:
+    type: string
+    format: date-time
+    description: Верхняя граница исходных данных, включённых в агрегат (watermark).
+    example: '2026-08-03T23:59:59Z'
+  calculationVersion:
+    type: integer
+    minimum: 1
+    description: Версия проектора/схемы агрегации.
+    example: 1
+  expiresAt:
+    type: string
+    format: date-time
+    description: Ретенция снапшота (по умолчанию 31 день).
+    example: '2026-09-03T00:00:00Z'

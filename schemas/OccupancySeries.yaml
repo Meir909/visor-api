@@ -1,0 +1,16 @@
+type: object
+description: Серия загрузки по бакетам времени.
+required:
+  - granularity
+  - source
+  - points
+properties:
+  granularity:
+    $ref: './Granularity.yaml'
+  source:
+    $ref: './AnalyticsSource.yaml'
+  points:
+    type: array
+    description: Точки серии, упорядоченные по `periodStart`.
+    items:
+      $ref: './OccupancyPoint.yaml'

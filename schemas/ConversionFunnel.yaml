@@ -1,0 +1,55 @@
+type: object
+description: Воронка конверсии бронирований за период.
+required:
+  - period
+  - stages
+  - conversionRate
+properties:
+  period:
+    $ref: './AnalyticsPeriod.yaml'
+  stages:
+    type: object
+    description: Количество бронирований на каждом этапе жизненного цикла.
+    required:
+      - created
+      - confirmed
+      - checkedIn
+      - completed
+      - cancelled
+      - noShow
+    properties:
+      created:
+        type: integer
+        description: Созданные бронирования (включая DRAFT/PENDING).
+        example: 1000
+      confirmed:
+        type: integer
+        description: Подтверждённые.
+        example: 620
+      checkedIn:
+        type: integer
+        description: Прибывшие (check-in).
+        example: 340
+      completed:
+        type: integer
+        description: Завершённые (completed/active → completed).
+        example: 305
+      cancelled:
+        type: integer
+        description: Отменённые.
+        example: 180
+      noShow:
+        type: integer
+        description: Не пришедшие (no-show).
+        example: 60
+      expired:
+        type: integer
+        description: Истёкшие (hold timeout).
+        example: 40
+  conversionRate:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Доля бронирований, доведённых до check-in (`checkedIn / created`).
+    example: 0.34

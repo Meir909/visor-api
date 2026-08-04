@@ -1,0 +1,21 @@
+type: object
+description: Серия выручки по бакетам времени.
+required:
+  - granularity
+  - currency
+  - source
+  - points
+properties:
+  granularity:
+    $ref: './Granularity.yaml'
+  currency:
+    type: string
+    description: Валюта расчётов (ISO 4217).
+    example: KZT
+  source:
+    $ref: './AnalyticsSource.yaml'
+  points:
+    type: array
+    description: Точки серии, упорядоченные по `periodStart`.
+    items:
+      $ref: './RevenuePoint.yaml'

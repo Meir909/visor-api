@@ -1129,3 +1129,255 @@ LayoutValidationExample:
     meta:
       requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
       timestamp: '2026-08-04T10:45:00Z'
+
+AnalyticsOverviewExample:
+  summary: Сводка дашборда организации за месяц
+  value:
+    data:
+      period:
+        from: '2026-07-04T00:00:00Z'
+        to: '2026-08-04T00:00:00Z'
+      source:
+        snapshotType: DAILY_REVENUE
+        granularity: DAY
+        sourceWatermark: '2026-08-03T23:59:59Z'
+        calculationVersion: 1
+        expiresAt: '2026-09-04T00:00:00Z'
+      revenue:
+        total: '128450000'
+        bookings: 4320
+        avgCheck: '29733'
+      occupancy:
+        occupancyRate: 0.42
+        occupiedHours: 31250
+        resourcesTotal: 24
+      bookings:
+        created: 1000
+        confirmed: 620
+        checkedIn: 340
+        cancelled: 180
+        noShow: 60
+      conversion:
+        conversionRate: 0.34
+      topResource:
+        rank: 1
+        resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name: PC 12
+        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        zoneName: VIP Zone 2
+        bookings: 87
+        occupiedHours: 312.5
+        revenue: '4217500'
+        occupancyRate: 0.81
+      activeClubs: 2
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'
+
+RevenueSeriesExample:
+  summary: Дневная серия выручки за неделю
+  value:
+    data:
+      granularity: DAY
+      currency: KZT
+      source:
+        snapshotType: DAILY_REVENUE
+        granularity: DAY
+        sourceWatermark: '2026-08-03T23:59:59Z'
+        calculationVersion: 1
+        expiresAt: '2026-09-03T00:00:00Z'
+      points:
+        - periodStart: '2026-07-29T00:00:00Z'
+          periodEnd: '2026-07-30T00:00:00Z'
+          revenue: '4580000'
+          refunds: '30000'
+          bookings: 152
+          cancelledBookings: 9
+          avgCheck: '30131'
+        - periodStart: '2026-07-30T00:00:00Z'
+          periodEnd: '2026-07-31T00:00:00Z'
+          revenue: '6210000'
+          refunds: '45000'
+          bookings: 204
+          cancelledBookings: 11
+          avgCheck: '30441'
+        - periodStart: '2026-07-31T00:00:00Z'
+          periodEnd: '2026-08-01T00:00:00Z'
+          revenue: '8940000'
+          refunds: '60000'
+          bookings: 287
+          cancelledBookings: 14
+          avgCheck: '31149'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'
+
+OccupancySeriesExample:
+  summary: Дневная серия загрузки за неделю
+  value:
+    data:
+      granularity: DAY
+      source:
+        snapshotType: HOURLY_OCCUPANCY
+        granularity: DAY
+        sourceWatermark: '2026-08-03T23:59:59Z'
+        calculationVersion: 1
+        expiresAt: '2026-09-03T00:00:00Z'
+      points:
+        - periodStart: '2026-07-29T00:00:00Z'
+          periodEnd: '2026-07-30T00:00:00Z'
+          occupiedHours: 4210
+          availableHours: 5790
+          totalHours: 10000
+          occupancyRate: 0.42
+          resourcesInUse: 9
+          resourcesTotal: 24
+        - periodStart: '2026-07-30T00:00:00Z'
+          periodEnd: '2026-07-31T00:00:00Z'
+          occupiedHours: 4980
+          availableHours: 5020
+          totalHours: 10000
+          occupancyRate: 0.5
+          resourcesInUse: 11
+          resourcesTotal: 24
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'
+
+ConversionFunnelExample:
+  summary: Воронка конверсии за месяц
+  value:
+    data:
+      period:
+        from: '2026-07-04T00:00:00Z'
+        to: '2026-08-04T00:00:00Z'
+      stages:
+        created: 1000
+        confirmed: 620
+        checkedIn: 340
+        completed: 305
+        cancelled: 180
+        noShow: 60
+        expired: 40
+      conversionRate: 0.34
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'
+
+PopularResourcesExample:
+  summary: Топ-3 популярных ресурсов за месяц
+  value:
+    data:
+      source:
+        snapshotType: POPULAR_RESOURCES
+        granularity: DAY
+        sourceWatermark: '2026-08-03T23:59:59Z'
+        calculationVersion: 1
+        expiresAt: '2026-09-03T00:00:00Z'
+      items:
+        - rank: 1
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          name: PC 12
+          zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+          zoneName: VIP Zone 2
+          bookings: 87
+          occupiedHours: 312.5
+          revenue: '4217500'
+          occupancyRate: 0.81
+        - rank: 2
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa7
+          name: PC 07
+          zoneId: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+          zoneName: Основной зал
+          bookings: 81
+          occupiedHours: 298
+          revenue: '3650000'
+          occupancyRate: 0.77
+        - rank: 3
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa8
+          name: VIP Room 1
+          zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+          zoneName: VIP Zone 2
+          bookings: 64
+          occupiedHours: 240.5
+          revenue: '3120000'
+          occupancyRate: 0.72
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'
+
+PeakHoursExample:
+  summary: Пиковые часы за последние 4 недели
+  value:
+    data:
+      timezone: Asia/Almaty
+      source:
+        snapshotType: HOURLY_OCCUPANCY
+        granularity: HOUR
+        sourceWatermark: '2026-08-03T23:59:59Z'
+        calculationVersion: 1
+        expiresAt: '2026-09-03T00:00:00Z'
+      items:
+        - hour: '20:00'
+          occupancyRate: 0.87
+          bookings: 64
+          shareOfOccupancy: 0.18
+        - hour: '21:00'
+          occupancyRate: 0.84
+          bookings: 58
+          shareOfOccupancy: 0.17
+        - hour: '19:00'
+          occupancyRate: 0.76
+          bookings: 52
+          shareOfOccupancy: 0.15
+        - hour: '22:00'
+          occupancyRate: 0.61
+          bookings: 41
+          shareOfOccupancy: 0.12
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'
+
+ClubAnalyticsOverviewExample:
+  summary: Сводка дашборда клуба за неделю
+  value:
+    data:
+      period:
+        from: '2026-07-28T00:00:00Z'
+        to: '2026-08-04T00:00:00Z'
+      source:
+        snapshotType: DAILY_REVENUE
+        granularity: DAY
+        sourceWatermark: '2026-08-03T23:59:59Z'
+        calculationVersion: 1
+        expiresAt: '2026-09-04T00:00:00Z'
+      revenue:
+        total: '42300000'
+        bookings: 1390
+        avgCheck: '30431'
+      occupancy:
+        occupancyRate: 0.47
+        occupiedHours: 12500
+        resourcesTotal: 24
+      bookings:
+        created: 1450
+        confirmed: 920
+        checkedIn: 680
+        cancelled: 210
+        noShow: 80
+      conversion:
+        conversionRate: 0.47
+      topResource:
+        rank: 1
+        resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name: PC 12
+        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        zoneName: VIP Zone 2
+        bookings: 41
+        occupiedHours: 156
+        revenue: '1980000'
+        occupancyRate: 0.84
+      activeClubs: 1
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:50:00Z'

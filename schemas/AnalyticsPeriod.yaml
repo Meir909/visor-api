@@ -1,0 +1,16 @@
+type: object
+description: Период аналитики (полуоткрытый `[from, to)`).
+required:
+  - from
+  - to
+properties:
+  from:
+    type: string
+    format: date-time
+    description: Начало периода (inclusive), UTC.
+    example: '2026-07-01T00:00:00Z'
+  to:
+    type: string
+    format: date-time
+    description: Конец периода (exclusive), UTC.
+    example: '2026-08-01T00:00:00Z'

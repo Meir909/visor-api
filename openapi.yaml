@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки) и **Layout** (публикация карты клуба, версии планировки, зоны). Остальные модули (Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны) и **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы). Остальные модули (Pricing, Notifications, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -710,7 +710,51 @@ tags:
       - Каждый объект COMPUTER/VIP_ROOM ссылается на активный ресурс клуба.
       - `id` объекта совпадает с `layout_object_key` ресурса.
 
+  - name: analytics
+    description: |-
+      # Аналитика (Owner / Admin дашборды)
+
+      Готовые агрегаты для дашбордов: выручка, загрузка, конверсия, популярные ресурсы и пиковые часы.
+
+      **Разрешения:** `analytics.read.organization` — ORG_OWNER видит всю организацию; CLUB_ADMIN — только свои клубы (обязателен `clubId`).
+
+      **Ключевое правило:** данные читаются из агрегатов (`analytics_snapshots`), а не сканированием операционных таблиц при каждом запросе. Ретенция агрегатов — 31 день.
+
+      ## Пайплайн агрегации
+
+      ```mermaid
+      flowchart LR
+          DE[Domain events: reservations, provider] --> Outbox[(Outbox)]
+          Outbox --> Projector[Analytics Projector]
+          Projector --> Metrics[(Analytics Aggregates)]
+          OwnerAPI[Owner API] --> Metrics
+          Web[Owner/Admin Dashboard] --> OwnerAPI
+      ```
+
+      ## Типы снапшотов
+
+      - `DAILY_REVENUE` — выручка по бакетам (HOUR/DAY/WEEK).
+      - `HOURLY_OCCUPANCY` — загрузка ресурсов, пиковые часы.
+      - `CONVERSION` — воронка `created → confirmed → checked_in → completed`.
+      - `POPULAR_RESOURCES` — топ ресурсов.
+
+      **Ошибки:** `422 ANALYTICS_RANGE_TOO_LARGE` (период больше ретенции/лимита точек), `422 INVALID_GRANULARITY`, `503 ANALYTICS_NOT_READY` (проектор ещё не догнал watermark).
+
 paths:
+  '/organizations/{organizationId}/analytics/overview':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1overview'
+  '/organizations/{organizationId}/analytics/revenue':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1revenue'
+  '/organizations/{organizationId}/analytics/occupancy':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1occupancy'
+  '/organizations/{organizationId}/analytics/conversion':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1conversion'
+  '/organizations/{organizationId}/analytics/resources/popular':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1resources~1popular'
+  '/organizations/{organizationId}/analytics/peak-hours':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1peak-hours'
+  '/organizations/{organizationId}/clubs/{clubId}/analytics/overview':
+    $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1analytics~1overview'
   '/clubs/{clubId}/layout':
     $ref: './paths/layout.yaml#/~1clubs~1{clubId}~1layout'
   '/organizations/{organizationId}/clubs/{clubId}/layouts':
@@ -1095,6 +1139,34 @@ components:
       $ref: './schemas/ZoneCreateRequest.yaml'
     ZoneUpdateRequest:
       $ref: './schemas/ZoneUpdateRequest.yaml'
+    Granularity:
+      $ref: './schemas/Granularity.yaml'
+    AnalyticsSnapshotType:
+      $ref: './schemas/AnalyticsSnapshotType.yaml'
+    AnalyticsPeriod:
+      $ref: './schemas/AnalyticsPeriod.yaml'
+    AnalyticsSource:
+      $ref: './schemas/AnalyticsSource.yaml'
+    RevenuePoint:
+      $ref: './schemas/RevenuePoint.yaml'
+    RevenueSeries:
+      $ref: './schemas/RevenueSeries.yaml'
+    OccupancyPoint:
+      $ref: './schemas/OccupancyPoint.yaml'
+    OccupancySeries:
+      $ref: './schemas/OccupancySeries.yaml'
+    ConversionFunnel:
+      $ref: './schemas/ConversionFunnel.yaml'
+    PopularResource:
+      $ref: './schemas/PopularResource.yaml'
+    PopularResources:
+      $ref: './schemas/PopularResources.yaml'
+    PeakHour:
+      $ref: './schemas/PeakHour.yaml'
+    PeakHours:
+      $ref: './schemas/PeakHours.yaml'
+    AnalyticsOverview:
+      $ref: './schemas/AnalyticsOverview.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1186,6 +1258,14 @@ components:
       $ref: './components/parameters.yaml#/LayoutId'
     ZoneTypeQuery:
       $ref: './components/parameters.yaml#/ZoneTypeQuery'
+    AnalyticsFrom:
+      $ref: './components/parameters.yaml#/AnalyticsFrom'
+    AnalyticsTo:
+      $ref: './components/parameters.yaml#/AnalyticsTo'
+    Granularity:
+      $ref: './components/parameters.yaml#/Granularity'
+    AnalyticsLimit:
+      $ref: './components/parameters.yaml#/AnalyticsLimit'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -1288,3 +1368,17 @@ components:
       $ref: './components/examples.yaml#/ZoneCreateExample'
     LayoutValidationExample:
       $ref: './components/examples.yaml#/LayoutValidationExample'
+    AnalyticsOverviewExample:
+      $ref: './components/examples.yaml#/AnalyticsOverviewExample'
+    RevenueSeriesExample:
+      $ref: './components/examples.yaml#/RevenueSeriesExample'
+    OccupancySeriesExample:
+      $ref: './components/examples.yaml#/OccupancySeriesExample'
+    ConversionFunnelExample:
+      $ref: './components/examples.yaml#/ConversionFunnelExample'
+    PopularResourcesExample:
+      $ref: './components/examples.yaml#/PopularResourcesExample'
+    PeakHoursExample:
+      $ref: './components/examples.yaml#/PeakHoursExample'
+    ClubAnalyticsOverviewExample:
+      $ref: './components/examples.yaml#/ClubAnalyticsOverviewExample'

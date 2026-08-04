@@ -1,0 +1,345 @@
+# =====================================================================
+# Visora API — Paths модуля Analytics (дашборды, агрегаты)
+# =====================================================================
+
+'/organizations/{organizationId}/analytics/overview':
+  get:
+    tags:
+      - analytics
+    summary: Сводка дашборда организации
+    operationId: getAnalyticsOverview
+    description: |-
+      Сводные показатели организации за период: выручка, загрузка, бронирования, конверсия и топ ресурс.
+
+      **Правила:**
+      - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId` в пределах его клубов.
+      - Данные читаются из агрегатов (`analytics_snapshots`), а не сканированием операционных таблиц.
+      - Период ограничен ретенцией снапшота (31 день); больший диапазон → `422 ANALYTICS_RANGE_TOO_LARGE`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Сводка дашборда.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/AnalyticsOverview.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              overview:
+                $ref: '../components/examples.yaml#/AnalyticsOverviewExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/analytics/revenue':
+  get:
+    tags:
+      - analytics
+    summary: Серия выручки организации
+    operationId: getRevenueSeries
+    description: |-
+      Выручка по бакетам времени (`HOUR`/`DAY`/`WEEK`). Значения в minor units валюты строкой.
+
+      - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+      - По умолчанию гранулярность `DAY`; максимум точек — 100 (`ANALYTICS_RANGE_TOO_LARGE`).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/Granularity'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Серия выручки.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/RevenueSeries.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              revenue:
+                $ref: '../components/examples.yaml#/RevenueSeriesExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/analytics/occupancy':
+  get:
+    tags:
+      - analytics
+    summary: Серия загрузки организации
+    operationId: getOccupancySeries
+    description: |-
+      Загрузка ресурсов по бакетам времени: занятые/доступные ресурсо-часы и `occupancyRate` (0..1).
+
+      - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+      - Источник — снапшоты `HOURLY_OCCUPANCY`; гранулярность по умолчанию `DAY`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/Granularity'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Серия загрузки.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/OccupancySeries.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              occupancy:
+                $ref: '../components/examples.yaml#/OccupancySeriesExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/analytics/conversion':
+  get:
+    tags:
+      - analytics
+    summary: Воронка конверсии организации
+    operationId: getConversionFunnel
+    description: |-
+      Воронка жизненного цикла бронирований: `created → confirmed → checked_in → completed`, плюс отмены/ноу-шоу и `conversionRate`.
+
+      - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+      - Источник — снапшоты `CONVERSION`; период указывается через `from`/`to`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Воронка конверсии.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ConversionFunnel.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              conversion:
+                $ref: '../components/examples.yaml#/ConversionFunnelExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/analytics/resources/popular':
+  get:
+    tags:
+      - analytics
+    summary: Топ популярных ресурсов организации
+    operationId: getPopularResources
+    description: |-
+      Самые популярные ресурсы за период: бронирования, занятые ресурсо-часы и выручка.
+
+      - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+      - Источник — снапшоты `POPULAR_RESOURCES`; лимит топ-N через `limit` (по умолчанию 10, максимум 50).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/AnalyticsLimit'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Топ популярных ресурсов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PopularResources.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              popular:
+                $ref: '../components/examples.yaml#/PopularResourcesExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/analytics/peak-hours':
+  get:
+    tags:
+      - analytics
+    summary: Пиковые часы организации
+    operationId: getPeakHours
+    description: |-
+      Распределение загрузки по часам за период (в локальной таймзоне клуба). Помогает планировать смены и промоакции.
+
+      - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+      - Источник — производная от `HOURLY_OCCUPANCY`; часы нормируются в `timezone` клуба.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Пиковые часы.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PeakHours.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              peakHours:
+                $ref: '../components/examples.yaml#/PeakHoursExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/clubs/{clubId}/analytics/overview':
+  get:
+    tags:
+      - analytics
+    summary: Сводка дашборда клуба
+    operationId: getClubAnalyticsOverview
+    description: |-
+      Сводные показатели одного клуба за период. Аналог `GET /analytics/overview`, но скоуп ограничен клубом.
+
+      **Правила:**
+      - `ORG_OWNER` видит все клубы организации; `CLUB_ADMIN` — только клубы из своего `clubIds`.
+      - Клуб должен существовать в организации → иначе `404`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Сводка дашборда клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/AnalyticsOverview.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              clubOverview:
+                $ref: '../components/examples.yaml#/ClubAnalyticsOverviewExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'

@@ -1,0 +1,30 @@
+type: object
+description: Часовой срез для анализа пиковых часов.
+required:
+  - hour
+  - occupancyRate
+  - bookings
+properties:
+  hour:
+    type: string
+    pattern: '^\d{2}:00$'
+    description: Час в формате `HH:00` в локальной таймзоне клуба.
+    example: '20:00'
+  occupancyRate:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Средняя загрузка в этот час (0..1).
+    example: 0.87
+  bookings:
+    type: integer
+    description: Количество бронирований, начинающихся в этот час.
+    example: 64
+  shareOfOccupancy:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Доля часа в суммарной загрузке периода (0..1).
+    example: 0.18

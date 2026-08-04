@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки) и **Layout** (публикация карты клуба, версии планировки, зоны). Остальные модули (Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны) и **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы). Остальные модули (Pricing, Notifications, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -694,7 +694,385 @@ tags:
       - Published версия неизменяема; правки — через новый draft.
       - Каждый объект COMPUTER/VIP_ROOM ссылается на активный ресурс клуба.
       - `id` объекта совпадает с `layout_object_key` ресурса.
+  - name: analytics
+    description: |-
+      # Аналитика (Owner / Admin дашборды)
+
+      Готовые агрегаты для дашбордов: выручка, загрузка, конверсия, популярные ресурсы и пиковые часы.
+
+      **Разрешения:** `analytics.read.organization` — ORG_OWNER видит всю организацию; CLUB_ADMIN — только свои клубы (обязателен `clubId`).
+
+      **Ключевое правило:** данные читаются из агрегатов (`analytics_snapshots`), а не сканированием операционных таблиц при каждом запросе. Ретенция агрегатов — 31 день.
+
+      ## Пайплайн агрегации
+
+      ```mermaid
+      flowchart LR
+          DE[Domain events: reservations, provider] --> Outbox[(Outbox)]
+          Outbox --> Projector[Analytics Projector]
+          Projector --> Metrics[(Analytics Aggregates)]
+          OwnerAPI[Owner API] --> Metrics
+          Web[Owner/Admin Dashboard] --> OwnerAPI
+      ```
+
+      ## Типы снапшотов
+
+      - `DAILY_REVENUE` — выручка по бакетам (HOUR/DAY/WEEK).
+      - `HOURLY_OCCUPANCY` — загрузка ресурсов, пиковые часы.
+      - `CONVERSION` — воронка `created → confirmed → checked_in → completed`.
+      - `POPULAR_RESOURCES` — топ ресурсов.
+
+      **Ошибки:** `422 ANALYTICS_RANGE_TOO_LARGE` (период больше ретенции/лимита точек), `422 INVALID_GRANULARITY`, `503 ANALYTICS_NOT_READY` (проектор ещё не догнал watermark).
 paths:
+  /organizations/{organizationId}/analytics/overview:
+    get:
+      tags:
+        - analytics
+      summary: Сводка дашборда организации
+      operationId: getAnalyticsOverview
+      description: |-
+        Сводные показатели организации за период: выручка, загрузка, бронирования, конверсия и топ ресурс.
+
+        **Правила:**
+        - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId` в пределах его клубов.
+        - Данные читаются из агрегатов (`analytics_snapshots`), а не сканированием операционных таблиц.
+        - Период ограничен ретенцией снапшота (31 день); больший диапазон → `422 ANALYTICS_RANGE_TOO_LARGE`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Сводка дашборда.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AnalyticsOverview'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                overview:
+                  $ref: '#/components/examples/AnalyticsOverviewExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/analytics/revenue:
+    get:
+      tags:
+        - analytics
+      summary: Серия выручки организации
+      operationId: getRevenueSeries
+      description: |-
+        Выручка по бакетам времени (`HOUR`/`DAY`/`WEEK`). Значения в minor units валюты строкой.
+
+        - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+        - По умолчанию гранулярность `DAY`; максимум точек — 100 (`ANALYTICS_RANGE_TOO_LARGE`).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/Granularity'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Серия выручки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RevenueSeries'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                revenue:
+                  $ref: '#/components/examples/RevenueSeriesExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/analytics/occupancy:
+    get:
+      tags:
+        - analytics
+      summary: Серия загрузки организации
+      operationId: getOccupancySeries
+      description: |-
+        Загрузка ресурсов по бакетам времени: занятые/доступные ресурсо-часы и `occupancyRate` (0..1).
+
+        - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+        - Источник — снапшоты `HOURLY_OCCUPANCY`; гранулярность по умолчанию `DAY`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/Granularity'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Серия загрузки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OccupancySeries'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                occupancy:
+                  $ref: '#/components/examples/OccupancySeriesExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/analytics/conversion:
+    get:
+      tags:
+        - analytics
+      summary: Воронка конверсии организации
+      operationId: getConversionFunnel
+      description: |-
+        Воронка жизненного цикла бронирований: `created → confirmed → checked_in → completed`, плюс отмены/ноу-шоу и `conversionRate`.
+
+        - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+        - Источник — снапшоты `CONVERSION`; период указывается через `from`/`to`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Воронка конверсии.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ConversionFunnel'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                conversion:
+                  $ref: '#/components/examples/ConversionFunnelExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/analytics/resources/popular:
+    get:
+      tags:
+        - analytics
+      summary: Топ популярных ресурсов организации
+      operationId: getPopularResources
+      description: |-
+        Самые популярные ресурсы за период: бронирования, занятые ресурсо-часы и выручка.
+
+        - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+        - Источник — снапшоты `POPULAR_RESOURCES`; лимит топ-N через `limit` (по умолчанию 10, максимум 50).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/AnalyticsLimit'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Топ популярных ресурсов.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PopularResources'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                popular:
+                  $ref: '#/components/examples/PopularResourcesExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/analytics/peak-hours:
+    get:
+      tags:
+        - analytics
+      summary: Пиковые часы организации
+      operationId: getPeakHours
+      description: |-
+        Распределение загрузки по часам за период (в локальной таймзоне клуба). Помогает планировать смены и промоакции.
+
+        - Разрешение `analytics.read.organization`; для `CLUB_ADMIN` обязателен `clubId`.
+        - Источник — производная от `HOURLY_OCCUPANCY`; часы нормируются в `timezone` клуба.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Пиковые часы.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PeakHours'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                peakHours:
+                  $ref: '#/components/examples/PeakHoursExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/clubs/{clubId}/analytics/overview:
+    get:
+      tags:
+        - analytics
+      summary: Сводка дашборда клуба
+      operationId: getClubAnalyticsOverview
+      description: |-
+        Сводные показатели одного клуба за период. Аналог `GET /analytics/overview`, но скоуп ограничен клубом.
+
+        **Правила:**
+        - `ORG_OWNER` видит все клубы организации; `CLUB_ADMIN` — только клубы из своего `clubIds`.
+        - Клуб должен существовать в организации → иначе `404`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Сводка дашборда клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AnalyticsOverview'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                clubOverview:
+                  $ref: '#/components/examples/ClubAnalyticsOverviewExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /clubs/{clubId}/layout:
     get:
       tags:
@@ -6048,6 +6426,9 @@ components:
         - LAYOUT_RESOURCE_NOT_FOUND
         - ZONE_CODE_TAKEN
         - ZONE_HAS_RESOURCES
+        - ANALYTICS_RANGE_TOO_LARGE
+        - INVALID_GRANULARITY
+        - ANALYTICS_NOT_READY
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -9619,6 +10000,493 @@ components:
           type: object
           description: Deep merge не-критических расширений.
           additionalProperties: true
+    Granularity:
+      type: string
+      description: Гранулярность агрегации аналитики.
+      enum:
+        - HOUR
+        - DAY
+        - WEEK
+    AnalyticsSnapshotType:
+      type: string
+      description: Тип аналитического снапшота (см. таблицу `analytics_snapshots`).
+      enum:
+        - DAILY_REVENUE
+        - HOURLY_OCCUPANCY
+        - CONVERSION
+        - POPULAR_RESOURCES
+        - PEAK_HOURS
+    AnalyticsPeriod:
+      type: object
+      description: Период аналитики (полуоткрытый `[from, to)`).
+      required:
+        - from
+        - to
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: Начало периода (inclusive), UTC.
+          example: '2026-07-01T00:00:00Z'
+        to:
+          type: string
+          format: date-time
+          description: Конец периода (exclusive), UTC.
+          example: '2026-08-01T00:00:00Z'
+    AnalyticsSource:
+      type: object
+      description: Метаданные проекции агрегатов, по которой построен ответ.
+      required:
+        - snapshotType
+        - granularity
+        - sourceWatermark
+        - calculationVersion
+      properties:
+        snapshotType:
+          $ref: '#/components/schemas/AnalyticsSnapshotType'
+        granularity:
+          $ref: '#/components/schemas/Granularity'
+        sourceWatermark:
+          type: string
+          format: date-time
+          description: Верхняя граница исходных данных, включённых в агрегат (watermark).
+          example: '2026-08-03T23:59:59Z'
+        calculationVersion:
+          type: integer
+          minimum: 1
+          description: Версия проектора/схемы агрегации.
+          example: 1
+        expiresAt:
+          type: string
+          format: date-time
+          description: Ретенция снапшота (по умолчанию 31 день).
+          example: '2026-09-03T00:00:00Z'
+    RevenuePoint:
+      type: object
+      description: Точка серии выручки за бакет времени.
+      required:
+        - periodStart
+        - periodEnd
+        - revenue
+        - bookings
+        - avgCheck
+      properties:
+        periodStart:
+          type: string
+          format: date-time
+          description: Начало бакета (inclusive).
+          example: '2026-07-31T00:00:00Z'
+        periodEnd:
+          type: string
+          format: date-time
+          description: Конец бакета (exclusive).
+          example: '2026-08-01T00:00:00Z'
+        revenue:
+          type: string
+          description: Выручка за бакет в minor units валюты (строка без плавающей точки).
+          example: '1250000'
+        refunds:
+          type: string
+          description: Возвраты за бакет в minor units.
+          example: '85000'
+        bookings:
+          type: integer
+          description: Количество завершённых бронирований в бакете.
+          example: 42
+        cancelledBookings:
+          type: integer
+          description: Количество отменённых бронирований.
+          example: 3
+        avgCheck:
+          type: string
+          description: Средний чек в minor units.
+          example: '29761'
+    RevenueSeries:
+      type: object
+      description: Серия выручки по бакетам времени.
+      required:
+        - granularity
+        - currency
+        - source
+        - points
+      properties:
+        granularity:
+          $ref: '#/components/schemas/Granularity'
+        currency:
+          type: string
+          description: Валюта расчётов (ISO 4217).
+          example: KZT
+        source:
+          $ref: '#/components/schemas/AnalyticsSource'
+        points:
+          type: array
+          description: Точки серии, упорядоченные по `periodStart`.
+          items:
+            $ref: '#/components/schemas/RevenuePoint'
+    OccupancyPoint:
+      type: object
+      description: Точка серии загрузки за бакет времени.
+      required:
+        - periodStart
+        - periodEnd
+        - occupiedHours
+        - availableHours
+        - totalHours
+        - occupancyRate
+        - resourcesTotal
+      properties:
+        periodStart:
+          type: string
+          format: date-time
+          description: Начало бакета (inclusive).
+          example: '2026-07-31T00:00:00Z'
+        periodEnd:
+          type: string
+          format: date-time
+          description: Конец бакета (exclusive).
+          example: '2026-08-01T00:00:00Z'
+        occupiedHours:
+          type: number
+          format: double
+          description: Занятые ресурсо-часы за бакет.
+          example: 182.5
+        availableHours:
+          type: number
+          format: double
+          description: Свободные ресурсо-часы за бакет.
+          example: 250
+        totalHours:
+          type: number
+          format: double
+          description: Суммарные ресурсо-часы (занятые + свободные).
+          example: 432.5
+        occupancyRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Доля занятых ресурсо-часов (0..1).
+          example: 0.42
+        resourcesInUse:
+          type: integer
+          description: Среднее число ресурсов, занятых в бакете.
+          example: 9
+        resourcesTotal:
+          type: integer
+          description: Среднее число активных ресурсов в периоде.
+          example: 24
+    OccupancySeries:
+      type: object
+      description: Серия загрузки по бакетам времени.
+      required:
+        - granularity
+        - source
+        - points
+      properties:
+        granularity:
+          $ref: '#/components/schemas/Granularity'
+        source:
+          $ref: '#/components/schemas/AnalyticsSource'
+        points:
+          type: array
+          description: Точки серии, упорядоченные по `periodStart`.
+          items:
+            $ref: '#/components/schemas/OccupancyPoint'
+    ConversionFunnel:
+      type: object
+      description: Воронка конверсии бронирований за период.
+      required:
+        - period
+        - stages
+        - conversionRate
+      properties:
+        period:
+          $ref: '#/components/schemas/AnalyticsPeriod'
+        stages:
+          type: object
+          description: Количество бронирований на каждом этапе жизненного цикла.
+          required:
+            - created
+            - confirmed
+            - checkedIn
+            - completed
+            - cancelled
+            - noShow
+          properties:
+            created:
+              type: integer
+              description: Созданные бронирования (включая DRAFT/PENDING).
+              example: 1000
+            confirmed:
+              type: integer
+              description: Подтверждённые.
+              example: 620
+            checkedIn:
+              type: integer
+              description: Прибывшие (check-in).
+              example: 340
+            completed:
+              type: integer
+              description: Завершённые (completed/active → completed).
+              example: 305
+            cancelled:
+              type: integer
+              description: Отменённые.
+              example: 180
+            noShow:
+              type: integer
+              description: Не пришедшие (no-show).
+              example: 60
+            expired:
+              type: integer
+              description: Истёкшие (hold timeout).
+              example: 40
+        conversionRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Доля бронирований, доведённых до check-in (`checkedIn / created`).
+          example: 0.34
+    PopularResource:
+      type: object
+      description: Ресурс в топе популярности за период.
+      required:
+        - rank
+        - resourceId
+        - name
+        - bookings
+        - occupiedHours
+        - revenue
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+          description: Позиция в топе (1 — самый популярный).
+          example: 1
+        resourceId:
+          type: string
+          format: uuid
+          description: Стабильный идентификатор ресурса (компьютер/VIP).
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          description: Отображаемое имя ресурса (например `PC 12`).
+          example: PC 12
+        zoneId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Зона ресурса или null.
+          example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        zoneName:
+          type:
+            - string
+            - 'null'
+          description: Имя зоны ресурса или null.
+          example: VIP Zone 2
+        bookings:
+          type: integer
+          description: Количество бронирований ресурса за период.
+          example: 87
+        occupiedHours:
+          type: number
+          format: double
+          description: Занятые ресурсо-часы за период.
+          example: 312.5
+        revenue:
+          type: string
+          description: Выручка ресурса за период в minor units валюты.
+          example: '4217500'
+        occupancyRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Доля занятых ресурсо-часов (0..1).
+          example: 0.81
+    PopularResources:
+      type: object
+      description: Топ популярных ресурсов за период.
+      required:
+        - source
+        - items
+      properties:
+        source:
+          $ref: '#/components/schemas/AnalyticsSource'
+        items:
+          type: array
+          description: Ресурсы, упорядоченные по популярности (rank 1..N).
+          items:
+            $ref: '#/components/schemas/PopularResource'
+    PeakHour:
+      type: object
+      description: Часовой срез для анализа пиковых часов.
+      required:
+        - hour
+        - occupancyRate
+        - bookings
+      properties:
+        hour:
+          type: string
+          pattern: ^\d{2}:00$
+          description: Час в формате `HH:00` в локальной таймзоне клуба.
+          example: '20:00'
+        occupancyRate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Средняя загрузка в этот час (0..1).
+          example: 0.87
+        bookings:
+          type: integer
+          description: Количество бронирований, начинающихся в этот час.
+          example: 64
+        shareOfOccupancy:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Доля часа в суммарной загрузке периода (0..1).
+          example: 0.18
+    PeakHours:
+      type: object
+      description: Распределение загрузки по часам за период.
+      required:
+        - timezone
+        - source
+        - items
+      properties:
+        timezone:
+          type: string
+          description: IANA-таймзона, в которой нормируются часы.
+          example: Asia/Almaty
+        source:
+          $ref: '#/components/schemas/AnalyticsSource'
+        items:
+          type: array
+          description: Часовые срезы, упорядоченные по `hour`.
+          items:
+            $ref: '#/components/schemas/PeakHour'
+    AnalyticsOverview:
+      type: object
+      description: Сводка дашборда организации или клуба за период.
+      required:
+        - period
+        - source
+        - revenue
+        - occupancy
+        - bookings
+        - conversion
+      properties:
+        period:
+          $ref: '#/components/schemas/AnalyticsPeriod'
+        source:
+          $ref: '#/components/schemas/AnalyticsSource'
+        revenue:
+          type: object
+          description: Итоги выручки.
+          required:
+            - total
+            - bookings
+            - avgCheck
+          properties:
+            total:
+              type: string
+              description: Суммарная выручка в minor units валюты.
+              example: '1250000'
+            bookings:
+              type: integer
+              description: Количество завершённых бронирований.
+              example: 42
+            avgCheck:
+              type: string
+              description: Средний чек в minor units.
+              example: '29761'
+        occupancy:
+          type: object
+          description: Итоги загрузки.
+          required:
+            - occupancyRate
+            - occupiedHours
+            - resourcesTotal
+          properties:
+            occupancyRate:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: Средняя загрузка за период (0..1).
+              example: 0.42
+            occupiedHours:
+              type: number
+              format: double
+              description: Занятые ресурсо-часы за период.
+              example: 5210
+            resourcesTotal:
+              type: integer
+              description: Среднее число активных ресурсов.
+              example: 24
+        bookings:
+          type: object
+          description: Итоги по бронированиям.
+          required:
+            - created
+            - checkedIn
+            - cancelled
+            - noShow
+          properties:
+            created:
+              type: integer
+              example: 1000
+            confirmed:
+              type: integer
+              example: 620
+            checkedIn:
+              type: integer
+              example: 340
+            cancelled:
+              type: integer
+              example: 180
+            noShow:
+              type: integer
+              example: 60
+        conversion:
+          type: object
+          description: Воронка и конверсия.
+          required:
+            - conversionRate
+          properties:
+            conversionRate:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: Доля бронирований, доведённых до check-in.
+              example: 0.34
+            funnel:
+              $ref: '#/components/schemas/ConversionFunnel'
+        topResource:
+          description: Самый популярный ресурс периода (null, если данных нет).
+          allOf:
+            - $ref: '#/components/schemas/PopularResource'
+          example:
+            rank: 1
+            resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            name: PC 12
+            zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            zoneName: VIP Zone 2
+            bookings: 87
+            occupiedHours: 312.5
+            revenue: '4217500'
+            occupancyRate: 0.81
+        activeClubs:
+          type: integer
+          minimum: 0
+          description: Число активных клубов, включённых в сводку.
+          example: 2
   parameters:
     ReservationId:
       name: reservationId
@@ -10047,6 +10915,44 @@ components:
       schema:
         $ref: '#/components/schemas/ZoneType'
       example: VIP
+    AnalyticsFrom:
+      name: from
+      in: query
+      required: true
+      description: Начало периода аналитики (inclusive), ISO 8601 UTC. Диапазон ограничен ретенцией агрегатов.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-07-04T00:00:00Z'
+    AnalyticsTo:
+      name: to
+      in: query
+      required: true
+      description: Конец периода аналитики (exclusive), ISO 8601 UTC.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-08-04T00:00:00Z'
+    Granularity:
+      name: granularity
+      in: query
+      required: false
+      description: Гранулярность агрегации серии. По умолчанию `DAY`.
+      schema:
+        $ref: '#/components/schemas/Granularity'
+        default: DAY
+      example: DAY
+    AnalyticsLimit:
+      name: limit
+      in: query
+      required: false
+      description: Ограничение количества элементов (топ ресурсов). По умолчанию 10, максимум 50.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 10
+      example: 10
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -11249,3 +12155,248 @@ components:
         meta:
           requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
           timestamp: '2026-08-04T10:45:00Z'
+    AnalyticsOverviewExample:
+      summary: Сводка дашборда организации за месяц
+      value:
+        data:
+          period:
+            from: '2026-07-04T00:00:00Z'
+            to: '2026-08-04T00:00:00Z'
+          source:
+            snapshotType: DAILY_REVENUE
+            granularity: DAY
+            sourceWatermark: '2026-08-03T23:59:59Z'
+            calculationVersion: 1
+            expiresAt: '2026-09-04T00:00:00Z'
+          revenue:
+            total: '128450000'
+            bookings: 4320
+            avgCheck: '29733'
+          occupancy:
+            occupancyRate: 0.42
+            occupiedHours: 31250
+            resourcesTotal: 24
+          bookings:
+            created: 1000
+            confirmed: 620
+            checkedIn: 340
+            cancelled: 180
+            noShow: 60
+          conversion:
+            conversionRate: 0.34
+          topResource:
+            rank: 1
+            resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            name: PC 12
+            zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            zoneName: VIP Zone 2
+            bookings: 87
+            occupiedHours: 312.5
+            revenue: '4217500'
+            occupancyRate: 0.81
+          activeClubs: 2
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'
+    RevenueSeriesExample:
+      summary: Дневная серия выручки за неделю
+      value:
+        data:
+          granularity: DAY
+          currency: KZT
+          source:
+            snapshotType: DAILY_REVENUE
+            granularity: DAY
+            sourceWatermark: '2026-08-03T23:59:59Z'
+            calculationVersion: 1
+            expiresAt: '2026-09-03T00:00:00Z'
+          points:
+            - periodStart: '2026-07-29T00:00:00Z'
+              periodEnd: '2026-07-30T00:00:00Z'
+              revenue: '4580000'
+              refunds: '30000'
+              bookings: 152
+              cancelledBookings: 9
+              avgCheck: '30131'
+            - periodStart: '2026-07-30T00:00:00Z'
+              periodEnd: '2026-07-31T00:00:00Z'
+              revenue: '6210000'
+              refunds: '45000'
+              bookings: 204
+              cancelledBookings: 11
+              avgCheck: '30441'
+            - periodStart: '2026-07-31T00:00:00Z'
+              periodEnd: '2026-08-01T00:00:00Z'
+              revenue: '8940000'
+              refunds: '60000'
+              bookings: 287
+              cancelledBookings: 14
+              avgCheck: '31149'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'
+    OccupancySeriesExample:
+      summary: Дневная серия загрузки за неделю
+      value:
+        data:
+          granularity: DAY
+          source:
+            snapshotType: HOURLY_OCCUPANCY
+            granularity: DAY
+            sourceWatermark: '2026-08-03T23:59:59Z'
+            calculationVersion: 1
+            expiresAt: '2026-09-03T00:00:00Z'
+          points:
+            - periodStart: '2026-07-29T00:00:00Z'
+              periodEnd: '2026-07-30T00:00:00Z'
+              occupiedHours: 4210
+              availableHours: 5790
+              totalHours: 10000
+              occupancyRate: 0.42
+              resourcesInUse: 9
+              resourcesTotal: 24
+            - periodStart: '2026-07-30T00:00:00Z'
+              periodEnd: '2026-07-31T00:00:00Z'
+              occupiedHours: 4980
+              availableHours: 5020
+              totalHours: 10000
+              occupancyRate: 0.5
+              resourcesInUse: 11
+              resourcesTotal: 24
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'
+    ConversionFunnelExample:
+      summary: Воронка конверсии за месяц
+      value:
+        data:
+          period:
+            from: '2026-07-04T00:00:00Z'
+            to: '2026-08-04T00:00:00Z'
+          stages:
+            created: 1000
+            confirmed: 620
+            checkedIn: 340
+            completed: 305
+            cancelled: 180
+            noShow: 60
+            expired: 40
+          conversionRate: 0.34
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'
+    PopularResourcesExample:
+      summary: Топ-3 популярных ресурсов за месяц
+      value:
+        data:
+          source:
+            snapshotType: POPULAR_RESOURCES
+            granularity: DAY
+            sourceWatermark: '2026-08-03T23:59:59Z'
+            calculationVersion: 1
+            expiresAt: '2026-09-03T00:00:00Z'
+          items:
+            - rank: 1
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              name: PC 12
+              zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+              zoneName: VIP Zone 2
+              bookings: 87
+              occupiedHours: 312.5
+              revenue: '4217500'
+              occupancyRate: 0.81
+            - rank: 2
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa7
+              name: PC 07
+              zoneId: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+              zoneName: Основной зал
+              bookings: 81
+              occupiedHours: 298
+              revenue: '3650000'
+              occupancyRate: 0.77
+            - rank: 3
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa8
+              name: VIP Room 1
+              zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+              zoneName: VIP Zone 2
+              bookings: 64
+              occupiedHours: 240.5
+              revenue: '3120000'
+              occupancyRate: 0.72
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'
+    PeakHoursExample:
+      summary: Пиковые часы за последние 4 недели
+      value:
+        data:
+          timezone: Asia/Almaty
+          source:
+            snapshotType: HOURLY_OCCUPANCY
+            granularity: HOUR
+            sourceWatermark: '2026-08-03T23:59:59Z'
+            calculationVersion: 1
+            expiresAt: '2026-09-03T00:00:00Z'
+          items:
+            - hour: '20:00'
+              occupancyRate: 0.87
+              bookings: 64
+              shareOfOccupancy: 0.18
+            - hour: '21:00'
+              occupancyRate: 0.84
+              bookings: 58
+              shareOfOccupancy: 0.17
+            - hour: '19:00'
+              occupancyRate: 0.76
+              bookings: 52
+              shareOfOccupancy: 0.15
+            - hour: '22:00'
+              occupancyRate: 0.61
+              bookings: 41
+              shareOfOccupancy: 0.12
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'
+    ClubAnalyticsOverviewExample:
+      summary: Сводка дашборда клуба за неделю
+      value:
+        data:
+          period:
+            from: '2026-07-28T00:00:00Z'
+            to: '2026-08-04T00:00:00Z'
+          source:
+            snapshotType: DAILY_REVENUE
+            granularity: DAY
+            sourceWatermark: '2026-08-03T23:59:59Z'
+            calculationVersion: 1
+            expiresAt: '2026-09-04T00:00:00Z'
+          revenue:
+            total: '42300000'
+            bookings: 1390
+            avgCheck: '30431'
+          occupancy:
+            occupancyRate: 0.47
+            occupiedHours: 12500
+            resourcesTotal: 24
+          bookings:
+            created: 1450
+            confirmed: 920
+            checkedIn: 680
+            cancelled: 210
+            noShow: 80
+          conversion:
+            conversionRate: 0.47
+          topResource:
+            rank: 1
+            resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            name: PC 12
+            zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            zoneName: VIP Zone 2
+            bookings: 41
+            occupiedHours: 156
+            revenue: '1980000'
+            occupancyRate: 0.84
+          activeClubs: 1
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:50:00Z'

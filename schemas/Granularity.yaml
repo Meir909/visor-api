@@ -1,0 +1,6 @@
+type: string
+description: Гранулярность агрегации аналитики.
+enum:
+  - HOUR
+  - DAY
+  - WEEK

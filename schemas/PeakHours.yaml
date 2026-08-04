@@ -1,0 +1,18 @@
+type: object
+description: Распределение загрузки по часам за период.
+required:
+  - timezone
+  - source
+  - items
+properties:
+  timezone:
+    type: string
+    description: IANA-таймзона, в которой нормируются часы.
+    example: Asia/Almaty
+  source:
+    $ref: './AnalyticsSource.yaml'
+  items:
+    type: array
+    description: Часовые срезы, упорядоченные по `hour`.
+    items:
+      $ref: './PeakHour.yaml'

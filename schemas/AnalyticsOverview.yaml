@@ -1,0 +1,116 @@
+type: object
+description: Сводка дашборда организации или клуба за период.
+required:
+  - period
+  - source
+  - revenue
+  - occupancy
+  - bookings
+  - conversion
+properties:
+  period:
+    $ref: './AnalyticsPeriod.yaml'
+  source:
+    $ref: './AnalyticsSource.yaml'
+  revenue:
+    type: object
+    description: Итоги выручки.
+    required:
+      - total
+      - bookings
+      - avgCheck
+    properties:
+      total:
+        type: string
+        description: Суммарная выручка в minor units валюты.
+        example: '1250000'
+      bookings:
+        type: integer
+        description: Количество завершённых бронирований.
+        example: 42
+      avgCheck:
+        type: string
+        description: Средний чек в minor units.
+        example: '29761'
+  occupancy:
+    type: object
+    description: Итоги загрузки.
+    required:
+      - occupancyRate
+      - occupiedHours
+      - resourcesTotal
+    properties:
+      occupancyRate:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 1
+        description: Средняя загрузка за период (0..1).
+        example: 0.42
+      occupiedHours:
+        type: number
+        format: double
+        description: Занятые ресурсо-часы за период.
+        example: 5210
+      resourcesTotal:
+        type: integer
+        description: Среднее число активных ресурсов.
+        example: 24
+  bookings:
+    type: object
+    description: Итоги по бронированиям.
+    required:
+      - created
+      - checkedIn
+      - cancelled
+      - noShow
+    properties:
+      created:
+        type: integer
+        example: 1000
+      confirmed:
+        type: integer
+        example: 620
+      checkedIn:
+        type: integer
+        example: 340
+      cancelled:
+        type: integer
+        example: 180
+      noShow:
+        type: integer
+        example: 60
+  conversion:
+    type: object
+    description: Воронка и конверсия.
+    required:
+      - conversionRate
+    properties:
+      conversionRate:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 1
+        description: Доля бронирований, доведённых до check-in.
+        example: 0.34
+      funnel:
+        $ref: './ConversionFunnel.yaml'
+  topResource:
+    description: Самый популярный ресурс периода (null, если данных нет).
+    allOf:
+      - $ref: './PopularResource.yaml'
+    example:
+      rank: 1
+      resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+      name: PC 12
+      zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+      zoneName: VIP Zone 2
+      bookings: 87
+      occupiedHours: 312.5
+      revenue: '4217500'
+      occupancyRate: 0.81
+  activeClubs:
+    type: integer
+    minimum: 0
+    description: Число активных клубов, включённых в сводку.
+    example: 2
