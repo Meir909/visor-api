@@ -1,0 +1,15 @@
+type: object
+description: "Обновление зоны клуба. `isActive: false` скрывает зону из публичной карты; компьютеры остаются, но в пассивной зоне не показываются."
+properties:
+  name:
+    type: string
+    maxLength: 120
+  displayOrder:
+    type: integer
+    minimum: 0
+  isActive:
+    type: boolean
+  metadata:
+    type: object
+    description: Deep merge не-критических расширений.
+    additionalProperties: true

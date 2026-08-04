@@ -1,0 +1,26 @@
+type: object
+description: Краткая запись версии планировки для списка версий.
+required:
+  - id
+  - version
+  - status
+  - name
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  version:
+    type: integer
+    minimum: 1
+  status:
+    $ref: './LayoutStatus.yaml'
+  name:
+    type: string
+    maxLength: 160
+  publishedAt:
+    type: [string, 'null']
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

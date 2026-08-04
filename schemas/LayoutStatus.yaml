@@ -1,0 +1,11 @@
+type: string
+description: Статус версии планировки клуба. Published версия неизменяема и единственная на клуб.
+enum:
+  - DRAFT
+  - PUBLISHED
+  - ARCHIVED
+x-enum-descriptions:
+  DRAFT: Черновик; редактируем.
+  PUBLISHED: Опубликованная версия; immutable, единственная.
+  ARCHIVED: Заменена новой публикацией; история.
+example: PUBLISHED

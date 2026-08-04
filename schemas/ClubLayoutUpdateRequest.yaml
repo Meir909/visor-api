@@ -1,0 +1,17 @@
+type: object
+description: Обновление черновой версии планировки. `objects` заменяет документ целиком (полная замена layout_data). Published версия не редактируется.
+properties:
+  name:
+    type: string
+    maxLength: 160
+  canvasWidth:
+    type: integer
+    minimum: 1
+  canvasHeight:
+    type: integer
+    minimum: 1
+  objects:
+    type: array
+    description: Полный набор объектов канваса (замена).
+    items:
+      $ref: './LayoutItem.yaml'

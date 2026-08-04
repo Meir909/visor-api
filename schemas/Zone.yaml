@@ -1,0 +1,53 @@
+type: object
+description: Зона клуба — логическая область для группировки, доступности, отображения на карте и ценообразования.
+required:
+  - id
+  - clubId
+  - code
+  - name
+  - type
+  - displayOrder
+  - isActive
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  code:
+    type: string
+    maxLength: 50
+    description: Стабильный код, уникальный в пределах клуба (case-insensitive).
+    example: vip-2
+  name:
+    type: string
+    maxLength: 120
+    example: VIP Zone 2
+  type:
+    $ref: './ZoneType.yaml'
+  displayOrder:
+    type: integer
+    minimum: 0
+    description: Порядок отображения в UI.
+    example: 2
+  isActive:
+    type: boolean
+    description: Операционная видимость.
+    default: true
+  computerCount:
+    type: [integer, 'null']
+    minimum: 0
+    description: Число активных компьютеров в зоне (агрегат).
+  metadata:
+    type: object
+    description: Не-критические расширения (jsonb).
+    additionalProperties: true
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

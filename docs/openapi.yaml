@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба) и **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки). Остальные модули (Layout, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки) и **Layout** (публикация карты клуба, версии планировки, зоны). Остальные модули (Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -633,7 +633,646 @@ tags:
           MAINTENANCE --> RETIRED: delete
           RETIRED --> [*]
       ```
+  - name: layout
+    description: |-
+      # Планировка (Player / Public)
+
+      Опубликованная интерактивная карта клуба для выбора места: канвас, зоны и объекты (компьютеры/VIP с `resourceId`).
+
+      **Ключевое правило:** бронь ссылается на стабильный `resourceId`, а не на координаты. Смена карты не ломает исторические записи.
+
+      ## Последовательность загрузки карты
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant F as Frontend
+          participant API as Club API
+          participant L as Layout
+          participant C as Computers
+          participant R as Reservations
+          participant P as Provider Projection
+
+          F->>API: GET /clubs/{id}/layout
+          API->>L: get published layout (ETag)
+          API->>C: get club resources (state)
+          API->>R: get reservation occupancy
+          API->>P: get latest provider states
+          API->>API: merge into availability read model
+          API-->>F: layout + resources + freshness/version
+      ```
+  - name: layout-admin
+    description: |-
+      # Планировка (Admin / Owner)
+
+      Редактор планировки: версии (draft → publish → archive), зоны клуба и валидация карты перед публикацией.
+
+      **Разрешения:** `club.manage` — ORG_OWNER и CLUB_ADMIN клуба.
+
+      ## Жизненный цикл версии планировки
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> DRAFT: create
+          DRAFT --> PUBLISHED: publish (после валидации)
+          PUBLISHED --> [*]
+          PUBLISHED --> ARCHIVED: auto (новая публикация)
+          DRAFT --> ARCHIVED: archive
+      ```
+
+      ## Публикация
+
+      ```mermaid
+      flowchart TD
+          V[POST .../layouts/{id}/validate] --> OK{valid?}
+          OK -- No --> 422[422 LAYOUT_VALIDATION_FAILED<br/>+ issues]
+          OK -- Yes --> P[POST .../layouts/{id}/publish]
+          P --> A[prev PUBLISHED → ARCHIVED<br/>draft → PUBLISHED + ETag update]
+      ```
+
+      **Правила:**
+      - Published версия неизменяема; правки — через новый draft.
+      - Каждый объект COMPUTER/VIP_ROOM ссылается на активный ресурс клуба.
+      - `id` объекта совпадает с `layout_object_key` ресурса.
 paths:
+  /clubs/{clubId}/layout:
+    get:
+      tags:
+        - layout
+      summary: Опубликованная карта клуба
+      operationId: getPublishedLayout
+      description: |-
+        Публичная планировка для интерактивной карты бронирования: канвас, зоны и объекты (компьютеры/VIP с `resourceId`).
+
+        **Правила:**
+        - Возвращается только `PUBLISHED` версия; клуб должен быть `ACTIVE` → иначе `404`.
+        - Объекты ссылаются на стабильный `resourceId`; бронирование работает с ним, а не с координатами.
+        - `ETag` = номер версии; для кэширования карты.
+
+        **Связанные данные:** доступность ресурсов — `/clubs/{clubId}/computers` + `/reservations/availability`.
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Опубликованная карта.
+          headers:
+            ETag:
+              description: Номер версии карты для кэширования.
+              schema:
+                type: string
+              example: '"2"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - version
+                      - canvasWidth
+                      - canvasHeight
+                      - zones
+                      - objects
+                      - updatedAt
+                    properties:
+                      version:
+                        type: integer
+                        minimum: 1
+                      canvasWidth:
+                        type: integer
+                        minimum: 1
+                      canvasHeight:
+                        type: integer
+                        minimum: 1
+                      zones:
+                        type: array
+                        description: Зоны для фильтров и легенды карты.
+                        items:
+                          $ref: '#/components/schemas/Zone'
+                      objects:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LayoutItem'
+                      updatedAt:
+                        type: string
+                        format: date-time
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                layout:
+                  $ref: '#/components/examples/PublishedLayoutExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/layouts:
+    post:
+      tags:
+        - layout-admin
+      summary: Создать черновик планировки
+      operationId: createLayoutDraft
+      description: |-
+        Создаёт новую черновую версию планировки с пустым канвасом.
+
+        **Разрешение:** `club.manage`.
+
+        **Правила:**
+        - `version` = max(версий клуба) + 1.
+        - Публикация текущей версии не затронута до `publish` этого черновика.
+        - Для копирования опубликованной карты клиент берёт её объекты и передаёт в PATCH.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubLayoutCreateRequest'
+            examples:
+              createDraft:
+                value:
+                  name: Карта после ремонта
+                  canvasWidth: 1200
+                  canvasHeight: 800
+      responses:
+        '201':
+          description: Черновик создан.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubLayout'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags:
+        - layout-admin
+      summary: Список версий планировки
+      operationId: listLayouts
+      description: |
+        Все версии планировки клуба (DRAFT/PUBLISHED/ARCHIVED). Для редактора и истории публикаций.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Версии планировки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClubLayoutSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                layouts:
+                  $ref: '#/components/examples/LayoutListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}:
+    get:
+      tags:
+        - layout-admin
+      summary: Версия планировки
+      operationId: getLayout
+      description: |
+        Полный документ версии планировки: канвас и объекты (layout_data). Допустимо редактировать только DRAFT.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Версия планировки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubLayout'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                layout:
+                  $ref: '#/components/examples/LayoutDetailExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - layout-admin
+      summary: Обновить черновик планировки
+      operationId: updateLayoutDraft
+      description: |-
+        Обновляет черновик: имя, канвас и полный набор объектов (замена layout_data).
+
+        **Правила:**
+        - Редактируется только `DRAFT` → для PUBLISHED/ARCHIVED `409 LAYOUT_IS_PUBLISHED`.
+        - Валидация выполняется при `validate`/`publish`, не при каждом сохранении (редактор сохраняет промежуточные состояния).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubLayoutUpdateRequest'
+            examples:
+              updateDraft:
+                value:
+                  name: Карта после ремонта (v2)
+                  objects:
+                    - id: pc-12
+                      type: COMPUTER
+                      x: 120
+                      'y': 250
+                      width: 72
+                      height: 54
+                      rotation: 90
+                      resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                      zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+                      label: PC 12
+      responses:
+        '200':
+          description: Черновик обновлён.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubLayout'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/validate:
+    post:
+      tags:
+        - layout-admin
+      summary: Проверить планировку перед публикацией
+      operationId: validateLayout
+      description: |-
+        Dry-run валидации планировки без изменения состояния. Возвращает список проблем, блокирующих публикацию.
+
+        **Проверки:**
+        - Каждый `resourceId` объектов COMPUTER/VIP_ROOM существует и активен в клубе (`LAYOUT_RESOURCE_NOT_FOUND`).
+        - `id` объектов уникальны (`LAYOUT_DUPLICATE_OBJECT_ID`).
+        - `zoneId` объекта соответствует зоне ресурса (`LAYOUT_ZONE_MISMATCH`).
+        - Для резервируемых объектов `resourceId` обязателен (`LAYOUT_RESOURCE_REQUIRED`).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Результат валидации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/LayoutValidation'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                validation:
+                  $ref: '#/components/examples/LayoutValidationExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/publish:
+    post:
+      tags:
+        - layout-admin
+      summary: Опубликовать планировку
+      operationId: publishLayout
+      description: |-
+        Публикует черновик: `DRAFT → PUBLISHED`. Предыдущая `PUBLISHED` версия переводится в `ARCHIVED`. Требует прохождения валидации.
+
+        **Разрешение:** `club.manage` (публикация карты — влияние на витрину, рекомендуется ORG_OWNER).
+
+        **Правила:**
+        - Валидация не пройдена = `422 LAYOUT_VALIDATION_FAILED` с issues.
+        - Публикация уже published версии — `409 LAYOUT_ALREADY_PUBLISHED`.
+        - Смена карты не ломает исторические брони: они ссылаются на стабильные resourceId.
+        - Изменение карты публикуется через `club.admin.{clubId}` (WebSocket).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 240
+              description: Опциональная причина публикации.
+      responses:
+        '200':
+          description: Планировка опубликована.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubLayout'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/archive:
+    post:
+      tags:
+        - layout-admin
+      summary: Архивировать версию планировки
+      operationId: archiveLayout
+      description: |
+        Переводит не-published версию в `ARCHIVED` (чистит черновики). Для PUBLISHED — `409` (архивируется автоматически при новой публикации).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Версия архивирована.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubLayout'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/clubs/{clubId}/zones:
+    get:
+      tags:
+        - layout-admin
+      summary: Список зон клуба
+      operationId: listZones
+      description: |
+        Все зоны клуба с числом активных компьютеров. Фильтр по типу (GENERAL/VIP/PRIVATE/OTHER).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ZoneTypeQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Зоны клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Zone'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                zones:
+                  $ref: '#/components/examples/ZoneListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+        - layout-admin
+      summary: Создать зону клуба
+      operationId: createZone
+      description: |-
+        Создаёт зону клуба для группировки, карты и ценообразования.
+
+        **Разрешение:** `club.manage`.
+
+        **Правила:**
+        - `code` уникален в клубе (case-insensitive) → занят = `409 ZONE_CODE_TAKEN`.
+        - Без зоны нельзя создать компьютер (см. модуль Computers).
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZoneCreateRequest'
+            examples:
+              createZone:
+                $ref: '#/components/examples/ZoneCreateExample'
+      responses:
+        '201':
+          description: Зона создана.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Zone'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /organizations/{organizationId}/clubs/{clubId}/zones/{zoneId}:
+    patch:
+      tags:
+        - layout-admin
+      summary: Обновить зону клуба
+      operationId: updateZone
+      description: |
+        Обновляет имя, порядок, активность и metadata зоны. `isActive: false` скрывает зону из публичной карты (компьютеры остаются, но не показываются).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ZoneId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZoneUpdateRequest'
+            examples:
+              updateZone:
+                value:
+                  displayOrder: 3
+      responses:
+        '200':
+          description: Зона обновлена.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Zone'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - layout-admin
+      summary: Удалить зону клуба
+      operationId: deleteZone
+      description: |
+        Мягко удаляет зону. Зона с активными ресурсами не удаляется — сначала переведите/выведите компьютеры (`409 ZONE_HAS_RESOURCES`).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ZoneId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Зона удалена.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /clubs/{clubId}/computers:
     get:
       tags:
@@ -5401,6 +6040,14 @@ components:
         - BINDING_NOT_FOUND
         - BINDING_ALREADY_EXISTS
         - RESOURCE_ALREADY_BOUND
+        - LAYOUT_NOT_FOUND
+        - LAYOUT_NOT_PUBLISHED
+        - LAYOUT_IS_PUBLISHED
+        - LAYOUT_ALREADY_PUBLISHED
+        - LAYOUT_VALIDATION_FAILED
+        - LAYOUT_RESOURCE_NOT_FOUND
+        - ZONE_CODE_TAKEN
+        - ZONE_HAS_RESOURCES
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -8612,6 +9259,366 @@ components:
           maxLength: 255
           description: Идентификатор ресурса у Provider. Занят на этом подключении = `409 BINDING_ALREADY_EXISTS`.
           example: GZ-CMP-012
+    LayoutStatus:
+      type: string
+      description: Статус версии планировки клуба. Published версия неизменяема и единственная на клуб.
+      enum:
+        - DRAFT
+        - PUBLISHED
+        - ARCHIVED
+      x-enum-descriptions:
+        DRAFT: Черновик; редактируем.
+        PUBLISHED: Опубликованная версия; immutable, единственная.
+        ARCHIVED: Заменена новой публикацией; история.
+      example: PUBLISHED
+    LayoutItemType:
+      type: string
+      description: Тип объекта на канвасе планировки. Только `COMPUTER` и `VIP_ROOM` резервируемы и имеют `resourceId`.
+      enum:
+        - COMPUTER
+        - VIP_ROOM
+        - DECOR
+      x-enum-descriptions:
+        COMPUTER: Компьютер; привязан к резервируемому ресурсу.
+        VIP_ROOM: ВИП-комната; привязана к резервируемому ресурсу.
+        DECOR: Декоративный элемент (стена, стойка, текст) без ресурса.
+      example: COMPUTER
+    LayoutItem:
+      type: object
+      description: Объект на канвасе планировки. `id` должен совпадать с `layout_object_key` соответствующего ресурса.
+      required:
+        - id
+        - type
+        - x
+        - 'y'
+        - width
+        - height
+        - rotation
+      properties:
+        id:
+          type: string
+          maxLength: 100
+          description: Стабильный ключ объекта (совпадает с `layout_object_key` ресурса), например `pc-12`.
+          example: pc-12
+        type:
+          $ref: '#/components/schemas/LayoutItemType'
+        x:
+          type: number
+          description: Координата X в логических единицах канваса.
+          example: 120
+        'y':
+          type: number
+          description: Координата Y.
+          example: 250
+        width:
+          type: number
+          minimum: 0
+          example: 72
+        height:
+          type: number
+          minimum: 0
+          example: 54
+        rotation:
+          type: number
+          description: Поворот в градусах (0–360).
+          example: 90
+        resourceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Резервируемый ресурс для COMPUTER/VIP_ROOM. Бронь ссылается на resourceId, а не на координаты.
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        zoneId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Зона объекта (для отображения/группировки); должна совпадать с зоной ресурса.
+        label:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+          description: Подпись на карте (если отличается от display_name ресурса).
+          example: PC 12
+    ClubLayout:
+      type: object
+      description: Версия планировки клуба (club_layouts). Published версия immutable; редактирование создаёт новый draft.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - version
+        - status
+        - name
+        - canvasWidth
+        - canvasHeight
+        - schemaVersion
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+          description: Монотонный номер версии в рамках клуба.
+          example: 3
+        status:
+          $ref: '#/components/schemas/LayoutStatus'
+        name:
+          type: string
+          maxLength: 160
+          description: Имя версии в редакторе.
+          example: Карта после ремонта
+        canvasWidth:
+          type: integer
+          minimum: 1
+          description: Логическая ширина канваса.
+          example: 1200
+        canvasHeight:
+          type: integer
+          minimum: 1
+          example: 800
+        schemaVersion:
+          type: integer
+          minimum: 1
+          description: Версия JSON-схемы документа.
+          example: 1
+        objects:
+          type: array
+          description: Объекты канваса (layout_data).
+          items:
+            $ref: '#/components/schemas/LayoutItem'
+        publishedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        publishedByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ClubLayoutSummary:
+      type: object
+      description: Краткая запись версии планировки для списка версий.
+      required:
+        - id
+        - version
+        - status
+        - name
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/LayoutStatus'
+        name:
+          type: string
+          maxLength: 160
+        publishedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ClubLayoutCreateRequest:
+      type: object
+      description: Создание новой черновой версии планировки. Начинается с пустого канваса; при создании из опубликованной версии можно скопировать её объекты (копирование на клиенте).
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 160
+          example: Карта после ремонта
+        canvasWidth:
+          type: integer
+          minimum: 1
+          default: 1200
+        canvasHeight:
+          type: integer
+          minimum: 1
+          default: 800
+    ClubLayoutUpdateRequest:
+      type: object
+      description: Обновление черновой версии планировки. `objects` заменяет документ целиком (полная замена layout_data). Published версия не редактируется.
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        canvasWidth:
+          type: integer
+          minimum: 1
+        canvasHeight:
+          type: integer
+          minimum: 1
+        objects:
+          type: array
+          description: Полный набор объектов канваса (замена).
+          items:
+            $ref: '#/components/schemas/LayoutItem'
+    LayoutValidation:
+      type: object
+      description: Результат валидации планировки (dry-run перед публикацией).
+      required:
+        - valid
+        - checkedAt
+      properties:
+        valid:
+          type: boolean
+          description: Проходит ли планировка проверки публикации.
+        version:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Проверенная версия.
+        issues:
+          type: array
+          description: Проблемы, блокирующие публикацию.
+          items:
+            type: object
+            required:
+              - code
+            properties:
+              code:
+                type: string
+                description: Машиночитаемый код проблемы.
+                example: LAYOUT_RESOURCE_NOT_FOUND
+              itemId:
+                type:
+                  - string
+                  - 'null'
+                maxLength: 100
+                description: Объект канваса, к которому относится проблема.
+              message:
+                type: string
+                description: Человеко-понятное описание.
+        checkedAt:
+          type: string
+          format: date-time
+    Zone:
+      type: object
+      description: Зона клуба — логическая область для группировки, доступности, отображения на карте и ценообразования.
+      required:
+        - id
+        - clubId
+        - code
+        - name
+        - type
+        - displayOrder
+        - isActive
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          maxLength: 50
+          description: Стабильный код, уникальный в пределах клуба (case-insensitive).
+          example: vip-2
+        name:
+          type: string
+          maxLength: 120
+          example: VIP Zone 2
+        type:
+          $ref: '#/components/schemas/ZoneType'
+        displayOrder:
+          type: integer
+          minimum: 0
+          description: Порядок отображения в UI.
+          example: 2
+        isActive:
+          type: boolean
+          description: Операционная видимость.
+          default: true
+        computerCount:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          description: Число активных компьютеров в зоне (агрегат).
+        metadata:
+          type: object
+          description: Не-критические расширения (jsonb).
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ZoneCreateRequest:
+      type: object
+      description: Создание зоны клуба.
+      required:
+        - code
+        - name
+        - type
+      properties:
+        code:
+          type: string
+          maxLength: 50
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,48}[a-z0-9])?$
+          description: Стабильный код; занят в клубе = `409 ZONE_CODE_TAKEN`.
+          example: vip-2
+        name:
+          type: string
+          maxLength: 120
+          example: VIP Zone 2
+        type:
+          $ref: '#/components/schemas/ZoneType'
+        displayOrder:
+          type: integer
+          minimum: 0
+          default: 0
+        metadata:
+          type: object
+          description: Не-критические расширения.
+          additionalProperties: true
+    ZoneUpdateRequest:
+      type: object
+      description: 'Обновление зоны клуба. `isActive: false` скрывает зону из публичной карты; компьютеры остаются, но в пассивной зоне не показываются.'
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        displayOrder:
+          type: integer
+          minimum: 0
+        isActive:
+          type: boolean
+        metadata:
+          type: object
+          description: Deep merge не-критических расширений.
+          additionalProperties: true
   parameters:
     ReservationId:
       name: reservationId
@@ -9014,6 +10021,32 @@ components:
       schema:
         $ref: '#/components/schemas/BindingStatus'
       example: ACTIVE
+    ZoneId:
+      name: zoneId
+      in: path
+      required: true
+      description: Идентификатор зоны клуба (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+    LayoutId:
+      name: layoutId
+      in: path
+      required: true
+      description: Идентификатор версии планировки (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 7a8b9c0d-1e2f-4a3b-8c5d-6e7f8a9b0c1d
+    ZoneTypeQuery:
+      name: type
+      in: query
+      required: false
+      description: Фильтр зон по типу.
+      schema:
+        $ref: '#/components/schemas/ZoneType'
+      example: VIP
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -10052,3 +11085,167 @@ components:
           pageSize: 20
           total: 1
           hasNextPage: false
+    PublishedLayoutExample:
+      summary: Опубликованная карта клуба (игрок)
+      value:
+        data:
+          version: 2
+          canvasWidth: 1200
+          canvasHeight: 800
+          updatedAt: '2026-08-03T18:00:00Z'
+          zones:
+            - id: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+              clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+              code: vip-2
+              name: VIP Zone 2
+              type: VIP
+              displayOrder: 2
+              isActive: true
+              createdAt: '2026-07-05T09:00:00Z'
+              updatedAt: '2026-07-06T11:00:00Z'
+            - id: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+              clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+              code: general-1
+              name: Основной зал
+              type: GENERAL
+              displayOrder: 1
+              isActive: true
+              createdAt: '2026-07-05T08:00:00Z'
+              updatedAt: '2026-07-05T08:00:00Z'
+          objects:
+            - id: pc-12
+              type: COMPUTER
+              x: 120
+              'y': 250
+              width: 72
+              height: 54
+              rotation: 90
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+              label: PC 12
+            - id: pc-5
+              type: COMPUTER
+              x: 220
+              'y': 250
+              width: 72
+              height: 54
+              rotation: 90
+              resourceId: 4a5b6c7d-8e9f-4a1b-8c2d-3e4f5a6b7c8d
+              zoneId: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+              label: PC 5
+            - id: wall-reception
+              type: DECOR
+              x: 20
+              'y': 20
+              width: 240
+              height: 40
+              rotation: 0
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    LayoutListExample:
+      summary: Список версий планировки
+      value:
+        data:
+          - id: 7a8b9c0d-1e2f-4a3b-8c5d-6e7f8a9b0c1d
+            version: 3
+            status: DRAFT
+            name: Карта после ремонта
+            updatedAt: '2026-08-04T10:00:00Z'
+          - id: 6f7e8d9c-0b1a-4c2d-9e3f-5a6b7c8d9e0f
+            version: 2
+            status: PUBLISHED
+            name: Текущая карта
+            publishedAt: '2026-08-03T18:00:00Z'
+            updatedAt: '2026-08-03T18:00:00Z'
+          - id: 5e6d7c8b-9a0f-4b1c-8d2e-4f5a6b7c8d9e
+            version: 1
+            status: ARCHIVED
+            name: Первая версия
+            publishedAt: '2026-07-05T10:00:00Z'
+            updatedAt: '2026-07-05T10:00:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 3
+          hasNextPage: false
+    LayoutDetailExample:
+      summary: Версия планировки (управляемый вид)
+      value:
+        data:
+          id: 7a8b9c0d-1e2f-4a3b-8c5d-6e7f8a9b0c1d
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          version: 3
+          status: DRAFT
+          name: Карта после ремонта
+          canvasWidth: 1200
+          canvasHeight: 800
+          schemaVersion: 1
+          objects:
+            - id: pc-12
+              type: COMPUTER
+              x: 120
+              'y': 250
+              width: 72
+              height: 54
+              rotation: 90
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+              label: PC 12
+          createdAt: '2026-08-04T09:00:00Z'
+          updatedAt: '2026-08-04T10:00:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ZoneListExample:
+      summary: Зоны клуба (список)
+      value:
+        data:
+          - id: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            code: general-1
+            name: Основной зал
+            type: GENERAL
+            displayOrder: 1
+            isActive: true
+            computerCount: 14
+            createdAt: '2026-07-05T08:00:00Z'
+            updatedAt: '2026-07-05T08:00:00Z'
+          - id: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            code: vip-2
+            name: VIP Zone 2
+            type: VIP
+            displayOrder: 2
+            isActive: true
+            computerCount: 6
+            createdAt: '2026-07-05T09:00:00Z'
+            updatedAt: '2026-07-06T11:00:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ZoneCreateExample:
+      summary: Создание зоны
+      value:
+        code: vip-2
+        name: VIP Zone 2
+        type: VIP
+        displayOrder: 2
+    LayoutValidationExample:
+      summary: Валидация планировки перед публикацией
+      value:
+        data:
+          valid: false
+          version: 3
+          issues:
+            - code: LAYOUT_RESOURCE_NOT_FOUND
+              itemId: pc-99
+              message: Объект ссылается на ресурс, отсутствующий в клубе или неактивный
+            - code: LAYOUT_DUPLICATE_OBJECT_ID
+              itemId: pc-12
+              message: Дублируется идентификатор объекта
+          checkedAt: '2026-08-04T10:45:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:45:00Z'

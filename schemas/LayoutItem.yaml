@@ -1,0 +1,52 @@
+type: object
+description: Объект на канвасе планировки. `id` должен совпадать с `layout_object_key` соответствующего ресурса.
+required:
+  - id
+  - type
+  - x
+  - y
+  - width
+  - height
+  - rotation
+properties:
+  id:
+    type: string
+    maxLength: 100
+    description: Стабильный ключ объекта (совпадает с `layout_object_key` ресурса), например `pc-12`.
+    example: pc-12
+  type:
+    $ref: './LayoutItemType.yaml'
+  x:
+    type: number
+    description: Координата X в логических единицах канваса.
+    example: 120
+  y:
+    type: number
+    description: Координата Y.
+    example: 250
+  width:
+    type: number
+    minimum: 0
+    example: 72
+  height:
+    type: number
+    minimum: 0
+    example: 54
+  rotation:
+    type: number
+    description: Поворот в градусах (0–360).
+    example: 90
+  resourceId:
+    type: [string, 'null']
+    format: uuid
+    description: Резервируемый ресурс для COMPUTER/VIP_ROOM. Бронь ссылается на resourceId, а не на координаты.
+    example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  zoneId:
+    type: [string, 'null']
+    format: uuid
+    description: Зона объекта (для отображения/группировки); должна совпадать с зоной ресурса.
+  label:
+    type: [string, 'null']
+    maxLength: 120
+    description: Подпись на карте (если отличается от display_name ресурса).
+    example: PC 12

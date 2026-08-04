@@ -1,0 +1,11 @@
+type: string
+description: Тип объекта на канвасе планировки. Только `COMPUTER` и `VIP_ROOM` резервируемы и имеют `resourceId`.
+enum:
+  - COMPUTER
+  - VIP_ROOM
+  - DECOR
+x-enum-descriptions:
+  COMPUTER: Компьютер; привязан к резервируемому ресурсу.
+  VIP_ROOM: ВИП-комната; привязана к резервируемому ресурсу.
+  DECOR: Декоративный элемент (стена, стойка, текст) без ресурса.
+example: COMPUTER

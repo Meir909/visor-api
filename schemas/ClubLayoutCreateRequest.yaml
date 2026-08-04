@@ -1,0 +1,17 @@
+type: object
+description: Создание новой черновой версии планировки. Начинается с пустого канваса; при создании из опубликованной версии можно скопировать её объекты (копирование на клиенте).
+required:
+  - name
+properties:
+  name:
+    type: string
+    maxLength: 160
+    example: Карта после ремонта
+  canvasWidth:
+    type: integer
+    minimum: 1
+    default: 1200
+  canvasHeight:
+    type: integer
+    minimum: 1
+    default: 800

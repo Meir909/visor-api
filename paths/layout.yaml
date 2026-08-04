@@ -1,0 +1,565 @@
+# =====================================================================
+# Visora API — Paths модуля Layout (карта клуба, версии, зоны)
+# =====================================================================
+
+'/clubs/{clubId}/layout':
+  get:
+    tags:
+      - layout
+    summary: Опубликованная карта клуба
+    operationId: getPublishedLayout
+    description: |-
+      Публичная планировка для интерактивной карты бронирования: канвас, зоны и объекты (компьютеры/VIP с `resourceId`).
+
+      **Правила:**
+      - Возвращается только `PUBLISHED` версия; клуб должен быть `ACTIVE` → иначе `404`.
+      - Объекты ссылаются на стабильный `resourceId`; бронирование работает с ним, а не с координатами.
+      - `ETag` = номер версии; для кэширования карты.
+
+      **Связанные данные:** доступность ресурсов — `/clubs/{clubId}/computers` + `/reservations/availability`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Опубликованная карта.
+        headers:
+          ETag:
+            description: Номер версии карты для кэширования.
+            schema:
+              type: string
+            example: '"2"'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: object
+                  required: [version, canvasWidth, canvasHeight, zones, objects, updatedAt]
+                  properties:
+                    version:
+                      type: integer
+                      minimum: 1
+                    canvasWidth:
+                      type: integer
+                      minimum: 1
+                    canvasHeight:
+                      type: integer
+                      minimum: 1
+                    zones:
+                      type: array
+                      description: Зоны для фильтров и легенды карты.
+                      items:
+                        $ref: '../schemas/Zone.yaml'
+                    objects:
+                      type: array
+                      items:
+                        $ref: '../schemas/LayoutItem.yaml'
+                    updatedAt:
+                      type: string
+                      format: date-time
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              layout:
+                $ref: '../components/examples.yaml#/PublishedLayoutExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/layouts':
+  post:
+    tags:
+      - layout-admin
+    summary: Создать черновик планировки
+    operationId: createLayoutDraft
+    description: |-
+      Создаёт новую черновую версию планировки с пустым канвасом.
+
+      **Разрешение:** `club.manage`.
+
+      **Правила:**
+      - `version` = max(версий клуба) + 1.
+      - Публикация текущей версии не затронута до `publish` этого черновика.
+      - Для копирования опубликованной карты клиент берёт её объекты и передаёт в PATCH.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubLayoutCreateRequest.yaml'
+          examples:
+            createDraft:
+              value:
+                name: Карта после ремонта
+                canvasWidth: 1200
+                canvasHeight: 800
+    responses:
+      '201':
+        description: Черновик создан.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubLayout.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+  get:
+    tags:
+      - layout-admin
+    summary: Список версий планировки
+    operationId: listLayouts
+    description: |
+      Все версии планировки клуба (DRAFT/PUBLISHED/ARCHIVED). Для редактора и истории публикаций.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Версии планировки.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ClubLayoutSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              layouts:
+                $ref: '../components/examples.yaml#/LayoutListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}':
+  get:
+    tags:
+      - layout-admin
+    summary: Версия планировки
+    operationId: getLayout
+    description: |
+      Полный документ версии планировки: канвас и объекты (layout_data). Допустимо редактировать только DRAFT.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/LayoutId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Версия планировки.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubLayout.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              layout:
+                $ref: '../components/examples.yaml#/LayoutDetailExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  patch:
+    tags:
+      - layout-admin
+    summary: Обновить черновик планировки
+    operationId: updateLayoutDraft
+    description: |-
+      Обновляет черновик: имя, канвас и полный набор объектов (замена layout_data).
+
+      **Правила:**
+      - Редактируется только `DRAFT` → для PUBLISHED/ARCHIVED `409 LAYOUT_IS_PUBLISHED`.
+      - Валидация выполняется при `validate`/`publish`, не при каждом сохранении (редактор сохраняет промежуточные состояния).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/LayoutId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubLayoutUpdateRequest.yaml'
+          examples:
+            updateDraft:
+              value:
+                name: Карта после ремонта (v2)
+                objects:
+                  - id: pc-12
+                    type: COMPUTER
+                    x: 120
+                    y: 250
+                    width: 72
+                    height: 54
+                    rotation: 90
+                    resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+                    label: PC 12
+    responses:
+      '200':
+        description: Черновик обновлён.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubLayout.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/validate':
+  post:
+    tags:
+      - layout-admin
+    summary: Проверить планировку перед публикацией
+    operationId: validateLayout
+    description: |-
+      Dry-run валидации планировки без изменения состояния. Возвращает список проблем, блокирующих публикацию.
+
+      **Проверки:**
+      - Каждый `resourceId` объектов COMPUTER/VIP_ROOM существует и активен в клубе (`LAYOUT_RESOURCE_NOT_FOUND`).
+      - `id` объектов уникальны (`LAYOUT_DUPLICATE_OBJECT_ID`).
+      - `zoneId` объекта соответствует зоне ресурса (`LAYOUT_ZONE_MISMATCH`).
+      - Для резервируемых объектов `resourceId` обязателен (`LAYOUT_RESOURCE_REQUIRED`).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/LayoutId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Результат валидации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/LayoutValidation.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              validation:
+                $ref: '../components/examples.yaml#/LayoutValidationExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/publish':
+  post:
+    tags:
+      - layout-admin
+    summary: Опубликовать планировку
+    operationId: publishLayout
+    description: |-
+      Публикует черновик: `DRAFT → PUBLISHED`. Предыдущая `PUBLISHED` версия переводится в `ARCHIVED`. Требует прохождения валидации.
+
+      **Разрешение:** `club.manage` (публикация карты — влияние на витрину, рекомендуется ORG_OWNER).
+
+      **Правила:**
+      - Валидация не пройдена = `422 LAYOUT_VALIDATION_FAILED` с issues.
+      - Публикация уже published версии — `409 LAYOUT_ALREADY_PUBLISHED`.
+      - Смена карты не ломает исторические брони: они ссылаются на стабильные resourceId.
+      - Изменение карты публикуется через `club.admin.{clubId}` (WebSocket).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/LayoutId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+                maxLength: 240
+            description: Опциональная причина публикации.
+    responses:
+      '200':
+        description: Планировка опубликована.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubLayout.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/archive':
+  post:
+    tags:
+      - layout-admin
+    summary: Архивировать версию планировки
+    operationId: archiveLayout
+    description: |
+      Переводит не-published версию в `ARCHIVED` (чистит черновики). Для PUBLISHED — `409` (архивируется автоматически при новой публикации).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/LayoutId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Версия архивирована.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubLayout.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/organizations/{organizationId}/clubs/{clubId}/zones':
+  get:
+    tags:
+      - layout-admin
+    summary: Список зон клуба
+    operationId: listZones
+    description: |
+      Все зоны клуба с числом активных компьютеров. Фильтр по типу (GENERAL/VIP/PRIVATE/OTHER).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ZoneTypeQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Зоны клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Zone.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              zones:
+                $ref: '../components/examples.yaml#/ZoneListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  post:
+    tags:
+      - layout-admin
+    summary: Создать зону клуба
+    operationId: createZone
+    description: |-
+      Создаёт зону клуба для группировки, карты и ценообразования.
+
+      **Разрешение:** `club.manage`.
+
+      **Правила:**
+      - `code` уникален в клубе (case-insensitive) → занят = `409 ZONE_CODE_TAKEN`.
+      - Без зоны нельзя создать компьютер (см. модуль Computers).
+
+      **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ZoneCreateRequest.yaml'
+          examples:
+            createZone:
+              $ref: '../components/examples.yaml#/ZoneCreateExample'
+    responses:
+      '201':
+        description: Зона создана.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Zone.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/organizations/{organizationId}/clubs/{clubId}/zones/{zoneId}':
+  patch:
+    tags:
+      - layout-admin
+    summary: Обновить зону клуба
+    operationId: updateZone
+    description: |
+      Обновляет имя, порядок, активность и metadata зоны. `isActive: false` скрывает зону из публичной карты (компьютеры остаются, но не показываются).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ZoneId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ZoneUpdateRequest.yaml'
+          examples:
+            updateZone:
+              value:
+                displayOrder: 3
+    responses:
+      '200':
+        description: Зона обновлена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Zone.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  delete:
+    tags:
+      - layout-admin
+    summary: Удалить зону клуба
+    operationId: deleteZone
+    description: |
+      Мягко удаляет зону. Зона с активными ресурсами не удаляется — сначала переведите/выведите компьютеры (`409 ZONE_HAS_RESOURCES`).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ZoneId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '204':
+        description: Зона удалена.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'

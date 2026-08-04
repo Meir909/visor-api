@@ -1,0 +1,27 @@
+type: object
+description: Создание зоны клуба.
+required:
+  - code
+  - name
+  - type
+properties:
+  code:
+    type: string
+    maxLength: 50
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,48}[a-z0-9])?$'
+    description: Стабильный код; занят в клубе = `409 ZONE_CODE_TAKEN`.
+    example: vip-2
+  name:
+    type: string
+    maxLength: 120
+    example: VIP Zone 2
+  type:
+    $ref: './ZoneType.yaml'
+  displayOrder:
+    type: integer
+    minimum: 0
+    default: 0
+  metadata:
+    type: object
+    description: Не-критические расширения.
+    additionalProperties: true

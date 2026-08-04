@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба) и **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки). Остальные модули (Layout, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки) и **Layout** (публикация карты клуба, версии планировки, зоны). Остальные модули (Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -647,7 +647,86 @@ tags:
           RETIRED --> [*]
       ```
 
+  - name: layout
+    description: |-
+      # Планировка (Player / Public)
+
+      Опубликованная интерактивная карта клуба для выбора места: канвас, зоны и объекты (компьютеры/VIP с `resourceId`).
+
+      **Ключевое правило:** бронь ссылается на стабильный `resourceId`, а не на координаты. Смена карты не ломает исторические записи.
+
+      ## Последовательность загрузки карты
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant F as Frontend
+          participant API as Club API
+          participant L as Layout
+          participant C as Computers
+          participant R as Reservations
+          participant P as Provider Projection
+
+          F->>API: GET /clubs/{id}/layout
+          API->>L: get published layout (ETag)
+          API->>C: get club resources (state)
+          API->>R: get reservation occupancy
+          API->>P: get latest provider states
+          API->>API: merge into availability read model
+          API-->>F: layout + resources + freshness/version
+      ```
+
+  - name: layout-admin
+    description: |-
+      # Планировка (Admin / Owner)
+
+      Редактор планировки: версии (draft → publish → archive), зоны клуба и валидация карты перед публикацией.
+
+      **Разрешения:** `club.manage` — ORG_OWNER и CLUB_ADMIN клуба.
+
+      ## Жизненный цикл версии планировки
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> DRAFT: create
+          DRAFT --> PUBLISHED: publish (после валидации)
+          PUBLISHED --> [*]
+          PUBLISHED --> ARCHIVED: auto (новая публикация)
+          DRAFT --> ARCHIVED: archive
+      ```
+
+      ## Публикация
+
+      ```mermaid
+      flowchart TD
+          V[POST .../layouts/{id}/validate] --> OK{valid?}
+          OK -- No --> 422[422 LAYOUT_VALIDATION_FAILED<br/>+ issues]
+          OK -- Yes --> P[POST .../layouts/{id}/publish]
+          P --> A[prev PUBLISHED → ARCHIVED<br/>draft → PUBLISHED + ETag update]
+      ```
+
+      **Правила:**
+      - Published версия неизменяема; правки — через новый draft.
+      - Каждый объект COMPUTER/VIP_ROOM ссылается на активный ресурс клуба.
+      - `id` объекта совпадает с `layout_object_key` ресурса.
+
 paths:
+  '/clubs/{clubId}/layout':
+    $ref: './paths/layout.yaml#/~1clubs~1{clubId}~1layout'
+  '/organizations/{organizationId}/clubs/{clubId}/layouts':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1layouts'
+  '/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1layouts~1{layoutId}'
+  '/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/validate':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1layouts~1{layoutId}~1validate'
+  '/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/publish':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1layouts~1{layoutId}~1publish'
+  '/organizations/{organizationId}/clubs/{clubId}/layouts/{layoutId}/archive':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1layouts~1{layoutId}~1archive'
+  '/organizations/{organizationId}/clubs/{clubId}/zones':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1zones'
+  '/organizations/{organizationId}/clubs/{clubId}/zones/{zoneId}':
+    $ref: './paths/layout.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1zones~1{zoneId}'
   '/clubs/{clubId}/computers':
     $ref: './paths/computers.yaml#/~1clubs~1{clubId}~1computers'
   '/clubs/{clubId}/computers/{computerId}':
@@ -994,6 +1073,28 @@ components:
       $ref: './schemas/ProviderResourceBinding.yaml'
     ProviderResourceBindingCreateRequest:
       $ref: './schemas/ProviderResourceBindingCreateRequest.yaml'
+    LayoutStatus:
+      $ref: './schemas/LayoutStatus.yaml'
+    LayoutItemType:
+      $ref: './schemas/LayoutItemType.yaml'
+    LayoutItem:
+      $ref: './schemas/LayoutItem.yaml'
+    ClubLayout:
+      $ref: './schemas/ClubLayout.yaml'
+    ClubLayoutSummary:
+      $ref: './schemas/ClubLayoutSummary.yaml'
+    ClubLayoutCreateRequest:
+      $ref: './schemas/ClubLayoutCreateRequest.yaml'
+    ClubLayoutUpdateRequest:
+      $ref: './schemas/ClubLayoutUpdateRequest.yaml'
+    LayoutValidation:
+      $ref: './schemas/LayoutValidation.yaml'
+    Zone:
+      $ref: './schemas/Zone.yaml'
+    ZoneCreateRequest:
+      $ref: './schemas/ZoneCreateRequest.yaml'
+    ZoneUpdateRequest:
+      $ref: './schemas/ZoneUpdateRequest.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1079,6 +1180,12 @@ components:
       $ref: './components/parameters.yaml#/ResourceStatusQuery'
     BindingStatusQuery:
       $ref: './components/parameters.yaml#/BindingStatusQuery'
+    ZoneId:
+      $ref: './components/parameters.yaml#/ZoneId'
+    LayoutId:
+      $ref: './components/parameters.yaml#/LayoutId'
+    ZoneTypeQuery:
+      $ref: './components/parameters.yaml#/ZoneTypeQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -1169,3 +1276,15 @@ components:
       $ref: './components/examples.yaml#/ProviderHealthCheckExample'
     BindingsExample:
       $ref: './components/examples.yaml#/BindingsExample'
+    PublishedLayoutExample:
+      $ref: './components/examples.yaml#/PublishedLayoutExample'
+    LayoutListExample:
+      $ref: './components/examples.yaml#/LayoutListExample'
+    LayoutDetailExample:
+      $ref: './components/examples.yaml#/LayoutDetailExample'
+    ZoneListExample:
+      $ref: './components/examples.yaml#/ZoneListExample'
+    ZoneCreateExample:
+      $ref: './components/examples.yaml#/ZoneCreateExample'
+    LayoutValidationExample:
+      $ref: './components/examples.yaml#/LayoutValidationExample'

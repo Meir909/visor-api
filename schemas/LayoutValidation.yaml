@@ -1,0 +1,35 @@
+type: object
+description: Результат валидации планировки (dry-run перед публикацией).
+required:
+  - valid
+  - checkedAt
+properties:
+  valid:
+    type: boolean
+    description: Проходит ли планировка проверки публикации.
+  version:
+    type: [integer, 'null']
+    minimum: 1
+    description: Проверенная версия.
+  issues:
+    type: array
+    description: Проблемы, блокирующие публикацию.
+    items:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код проблемы.
+          example: LAYOUT_RESOURCE_NOT_FOUND
+        itemId:
+          type: [string, 'null']
+          maxLength: 100
+          description: Объект канваса, к которому относится проблема.
+        message:
+          type: string
+          description: Человеко-понятное описание.
+  checkedAt:
+    type: string
+    format: date-time

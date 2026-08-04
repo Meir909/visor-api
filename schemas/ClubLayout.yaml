@@ -1,0 +1,67 @@
+type: object
+description: Версия планировки клуба (club_layouts). Published версия immutable; редактирование создаёт новый draft.
+required:
+  - id
+  - organizationId
+  - clubId
+  - version
+  - status
+  - name
+  - canvasWidth
+  - canvasHeight
+  - schemaVersion
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  organizationId:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  version:
+    type: integer
+    minimum: 1
+    description: Монотонный номер версии в рамках клуба.
+    example: 3
+  status:
+    $ref: './LayoutStatus.yaml'
+  name:
+    type: string
+    maxLength: 160
+    description: Имя версии в редакторе.
+    example: Карта после ремонта
+  canvasWidth:
+    type: integer
+    minimum: 1
+    description: Логическая ширина канваса.
+    example: 1200
+  canvasHeight:
+    type: integer
+    minimum: 1
+    example: 800
+  schemaVersion:
+    type: integer
+    minimum: 1
+    description: Версия JSON-схемы документа.
+    example: 1
+  objects:
+    type: array
+    description: Объекты канваса (layout_data).
+    items:
+      $ref: './LayoutItem.yaml'
+  publishedAt:
+    type: [string, 'null']
+    format: date-time
+  publishedByUserId:
+    type: [string, 'null']
+    format: uuid
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time
