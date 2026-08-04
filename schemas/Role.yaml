@@ -1,0 +1,50 @@
+type: object
+description: Каталожная запись роли RBAC. Каталог системных ролей, не содержит пользовательских данных.
+required:
+  - code
+  - name
+  - scopeType
+  - hierarchyLevel
+  - isSystem
+  - permissions
+properties:
+  code:
+    $ref: './RoleCode.yaml'
+  name:
+    type: string
+    description: Человекочитаемое имя роли.
+    example: Администратор клуба
+  description:
+    type: [string, 'null']
+    description: Назначение роли.
+  scopeType:
+    $ref: './RoleScope.yaml'
+  hierarchyLevel:
+    type: integer
+    minimum: 1
+    description: |
+      Уровень иерархии для правил назначения ролей:
+      - `1` — PLAYER
+      - `2` — CLUB_ADMIN
+      - `3` — ORG_OWNER
+      - `4` — PLATFORM_ADMIN (зарезервирован)
+
+      Назначать/отзывать можно только роли **строго ниже** своей; изменять участника с ролью **не ниже** своей запрещено.
+    example: 2
+  isSystem:
+    type: boolean
+    description: Системная роль — нельзя модифицировать/удалять.
+    default: true
+  isAssignable:
+    type: boolean
+    description: Можно ли назначить через organization membership. `PLATFORM_ADMIN` в MVP не назначается.
+    default: true
+  permissions:
+    type: array
+    description: Гранты, дающие доступ к операциям API. Проверка на уровне только UI запрещена.
+    items:
+      type: string
+      pattern: '^[a-z0-9_]+(\.[a-z0-9_]+)+$'
+    example:
+      - reservation.read.club
+      - reservation.check_in.club

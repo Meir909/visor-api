@@ -1,0 +1,50 @@
+type: object
+description: Полный доступ текущего пользователя (AuthContext для фронтенда). Позволяет UI корректно показать/скрыть разделы.
+required:
+  - userId
+  - platformRoles
+  - memberships
+properties:
+  userId:
+    type: string
+    format: uuid
+  platformRoles:
+    type: array
+    description: Глобальные (платформенные) роли. Каждый активный пользователь имеет `PLAYER`.
+    items:
+      $ref: './RoleCode.yaml'
+    example:
+      - PLAYER
+  memberships:
+    type: array
+    description: Tenants пользователя с ролями и клубными scope.
+    items:
+      type: object
+      required:
+        - organizationId
+        - organizationName
+        - status
+        - roles
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+          maxLength: 160
+        status:
+          $ref: './MembershipStatus.yaml'
+        roles:
+          type: array
+          items:
+            type: object
+            required:
+              - code
+            properties:
+              code:
+                $ref: './RoleCode.yaml'
+              clubIds:
+                type: array
+                items:
+                  type: string
+                  format: uuid

@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны **модули Reservations** (ядро платформы) и **Auth** (аутентификация и сессии). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии) и **Roles** (RBAC: владелец → админ → игрок). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -345,7 +345,610 @@ tags:
 
       - **ANY_AUTHENTICATED** — `auth.session.read.self`, `auth.session.revoke.self`, `auth.logout.self`.
       - **PLAYER** — `profile.read.self`.
+  - name: roles
+    description: |-
+      # Роли и доступ (Player)
+
+      Каталог ролей, мой доступ (`/me/roles`), мои организации, приглашения и их принятие/отклонение.
+
+      **Иерархия ролей:**
+
+      ```mermaid
+      flowchart TD
+          O[ORG_OWNER<br/>organization-wide] --> A[CLUB_ADMIN<br/>club scope]
+          A --> P[PLAYER<br/>global]
+      ```
+
+      - **PLAYER** (уровень 1) — глобальная роль, присваивается автоматически при регистрации.
+      - **CLUB_ADMIN** (уровень 2) — операции в рамках назначенных клубов.
+      - **ORG_OWNER** (уровень 3) — все клубы, участники и аналитика организации.
+      - **PLATFORM_ADMIN** (уровень 4) — зарезервирован, в MVP не назначается.
+
+      Правила назначения (см. тег `roles-admin`): назначать/отзывать можно только роли строго ниже своей; изменять участника с ролью не ниже своей запрещено; последнего владельца нельзя удалить.
+  - name: roles-admin
+    description: |-
+      # Роли и доступ (Admin / Owner)
+
+      Управление участниками организации: приглашения, роли, статусы и клубные scope.
+
+      **Разрешения:** `membership.manage.organization` — только ORG_OWNER.
+
+      ## Проверка назначения роли
+
+      ```mermaid
+      flowchart TD
+          M[Вызывающий: ORG_OWNER?] -- No --> F1[403 FORBIDDEN]
+          M -- Yes --> H{Целевой уровень роли<br/>< собственного?}
+          H -- No --> F2[403 ROLE_ASSIGNMENT_FORBIDDEN]
+          H -- Yes --> L{Удаляем/понижаем<br/>последнего ORG_OWNER?}
+          L -- Yes --> C[409 LAST_OWNER_PROTECTION]
+          L -- No --> S{CLUB_ADMIN имеет<br/>клубный scope?}
+          S -- No --> I[422 INVALID_ROLE_SCOPE]
+          S -- Yes --> OK[Применить + audit]
+      ```
+
+      ## Последовательность приглашения
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant O as Owner (Next.js)
+          participant API as Visora API
+          participant SVC as Roles Service
+          participant DB as PostgreSQL
+          participant U as Player
+
+          O->>API: POST /api/v1/organizations/{orgId}/members
+          API->>SVC: InviteMemberCommand
+          SVC->>SVC: hierarchy + scope check
+          SVC->>DB: INSERT membership (INVITED) + outbox
+          SVC-->>API: Membership
+          API-->>O: 201 Created
+          API-->>U: notification (WebSocket / me/invitations)
+          U->>API: POST /api/v1/me/invitations/{id}/accept
+          API->>SVC: AcceptInvitationCommand
+          SVC->>DB: INVITED → ACTIVE + accepted_at
+          API-->>U: 200 Membership
+      ```
+
+      Все изменения ролей/статусов аудируются (actor, tenant, before/after diff, IP, correlation id).
 paths:
+  /roles:
+    get:
+      tags:
+        - roles
+      summary: Каталог ролей
+      operationId: listRoles
+      description: |-
+        Возвращает каталог системных ролей с иерархией, scope и permissions. Каталог стабилен (коды не изменяются после релиза); служит источником прав для UI.
+
+        **Иерархия:** `ORG_OWNER` (3) > `CLUB_ADMIN` (2) > `PLAYER` (1); `PLATFORM_ADMIN` (4) зарезервирован и не назначается в MVP.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Каталог системных ролей.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Role'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                roleCatalog:
+                  $ref: '#/components/examples/RoleCatalogExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/roles:
+    get:
+      tags:
+        - roles
+      summary: Мой доступ (роли и tenants)
+      operationId: getMyAccess
+      description: |-
+        Возвращает AuthContext текущего пользователя: платформенные роли и memberships с ролями и клубными scope.
+
+        - Membership и роли **не кешируются в токене** — API резолвит их из базы/short-lived кеша при каждом запросе.
+        - Используется фронтендом для отображения разделов; авторизация операций всё равно выполняется на сервере.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Доступ текущего пользователя.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MyAccess'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                myAccess:
+                  $ref: '#/components/examples/MyAccessExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/memberships:
+    get:
+      tags:
+        - roles
+      summary: Мои memberships
+      operationId: getMyMemberships
+      description: |
+        Список организаций текущего пользователя со статусом и ролями. Включает только ACTIVE/SUSPENDED; INVITED приглашения отдельно в `/me/invitations`.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Список memberships пользователя.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                myMemberships:
+                  value:
+                    data:
+                      - id: f1e2d3c4-b5a6-4c7d-8e9f-0a1b2c3d4e5f
+                        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                        organizationName: Caspian Esports
+                        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+                        status: ACTIVE
+                        roles:
+                          - code: CLUB_ADMIN
+                            clubIds:
+                              - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                        acceptedAt: '2026-07-10T14:30:00Z'
+                        createdAt: '2026-07-10T12:00:00Z'
+                        updatedAt: '2026-07-10T14:30:00Z'
+                    meta:
+                      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+                      timestamp: '2026-08-04T10:20:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/invitations:
+    get:
+      tags:
+        - roles
+      summary: Мои приглашения
+      operationId: getMyInvitations
+      description: |
+        Ожидающие приглашения в организации (membership со статусом `INVITED`). Приглашение может истечь (`expiresAt`); после истечения `accept` возвращает `410 INVITATION_NOT_FOUND`.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Список ожидающих приглашений.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InvitationSummary'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                invitations:
+                  value:
+                    data:
+                      - id: e6f7a8b9-0c1d-4e2f-8a3b-4c5d6e7f8a9b
+                        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                        organizationName: Caspian Esports
+                        invitedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+                        invitedAt: '2026-08-04T10:30:00Z'
+                        expiresAt: '2026-08-11T10:30:00Z'
+                    meta:
+                      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+                      timestamp: '2026-08-04T10:31:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/invitations/{invitationId}/accept:
+    post:
+      tags:
+        - roles
+      summary: Принять приглашение
+      operationId: acceptInvitation
+      description: |
+        Принимает приглашение: membership переходит в `ACTIVE`, заполняется `acceptedAt`, роли вступают в силу.
+
+        - Принять может только приглашённый пользователь.
+        - Повторный accept идемпотентен: уже активный membership возвращает 200.
+        - Истёкшее/отозванное приглашение — `410` / `404 INVITATION_NOT_FOUND`.
+      parameters:
+        - $ref: '#/components/parameters/InvitationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Приглашение принято, membership активен.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/invitations/{invitationId}/decline:
+    post:
+      tags:
+        - roles
+      summary: Отклонить приглашение
+      operationId: declineInvitation
+      description: |
+        Отклоняет приглашение: membership переводится в `REVOKED` (отклонено). Отклонивший не может быть приглашён заново без нового invite.
+      parameters:
+        - $ref: '#/components/parameters/InvitationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Приглашение отклонено.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/members:
+    post:
+      tags:
+        - roles-admin
+      summary: Пригласить участника
+      operationId: inviteMember
+      description: |-
+        Создаёт membership со статусом `INVITED` (приглашение) для существующего пользователя или по телефону.
+
+        **Разрешение:** `membership.manage.organization` (ORG_OWNER).
+
+        **Правила иерархии:**
+        - Можно назначать только роли **строго ниже** своей (Owner назначает Admin, не другого Owner).
+        - `CLUB_ADMIN` требует минимум один `clubId` (иначе `422 INVALID_ROLE_SCOPE`).
+        - `ORG_OWNER` нельзя назначать через invite; второй Owner создаётся только явной передачей роли существующему Admin (`PATCH member` с прохождением иерархической проверки).
+        - Активный membership с тем же `(organization_id, user_id)` → `409 MEMBER_ALREADY_EXISTS`.
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberInviteRequest'
+            examples:
+              inviteAdmin:
+                value:
+                  userId: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+                  roleCode: CLUB_ADMIN
+                  clubIds:
+                    - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                  message: Приглашаем в команду администраторов
+      responses:
+        '201':
+          description: Приглашение создано (membership INVITED).
+          headers:
+            Location:
+              description: URL созданного membership.
+              schema:
+                type: string
+                format: uri-reference
+              example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f/members/6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                invited:
+                  value:
+                    data:
+                      id: e6f7a8b9-0c1d-4e2f-8a3b-4c5d6e7f8a9b
+                      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                      organizationName: Caspian Esports
+                      userId: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+                      user:
+                        id: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+                        displayName: Aigerim
+                        maskedPhone: +7 705 *** 12 34
+                        status: ACTIVE
+                      status: INVITED
+                      roles:
+                        - code: CLUB_ADMIN
+                          clubIds:
+                            - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                      invitedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+                      invitedAt: '2026-08-04T10:30:00Z'
+                      createdAt: '2026-08-04T10:30:00Z'
+                      updatedAt: '2026-08-04T10:30:00Z'
+                    meta:
+                      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+                      timestamp: '2026-08-04T10:31:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags:
+        - roles-admin
+      summary: Список участников организации
+      operationId: listMembers
+      description: |-
+        Возвращает участников организации с ролями и статусами.
+
+        **Разрешение:** `membership.read.organization` (ORG_OWNER; CLUB_ADMIN видит только свой клуб).
+
+        **Query:** пагинация (`page`, `pageSize`), фильтры `status`, `role`, поиск `q` по имени/телефону, `sort`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/MembershipStatusQuery'
+        - $ref: '#/components/parameters/RoleQuery'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Список участников.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                members:
+                  $ref: '#/components/examples/MembersListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /organizations/{organizationId}/members/{userId}:
+    get:
+      tags:
+        - roles-admin
+      summary: Детали участника
+      operationId: getMember
+      description: |
+        Полная информация об участнике: статус, роли, клубные scope, кто пригласил, история статуса.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/MemberUserId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Участник организации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - roles-admin
+      summary: Обновить участника (роли/статус)
+      operationId: updateMember
+      description: |-
+        Обновляет статус и/или полный набор ролей участника.
+
+        **Разрешение:** `membership.manage.organization` (ORG_OWNER).
+
+        **Правила иерархии и безопасности:**
+        - Нельзя изменять участника, чей наивысший уровень роли **>= собственного** (нет privilege escalation) → `403 ROLE_ASSIGNMENT_FORBIDDEN`.
+        - Нельзя снять последнюю роль `ORG_OWNER` с последнего владельца организации → `409 LAST_OWNER_PROTECTION`.
+        - `CLUB_ADMIN` требует минимум один клуб в scope → `422 INVALID_ROLE_SCOPE`.
+        - `ORG_OWNER` — только передача роли от Owner существующему Admin; клубный scope для Owner не заполняется.
+        - `status: SUSPENDED` приостанавливает доступ (membership без прав даже при наличии ролей); `ACTIVE` — восстановление.
+
+        **Аудит:** каждое изменение ролей/статуса фиксируется в audit log (actor, tenant, before/after).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/MemberUserId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberUpdateRequest'
+            examples:
+              promoteToOwner:
+                value:
+                  roles:
+                    - code: ORG_OWNER
+              suspendAdmin:
+                value:
+                  status: SUSPENDED
+      responses:
+        '200':
+          description: Участник обновлён.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+        - roles-admin
+      summary: Удалить участника
+      operationId: removeMember
+      description: |-
+        Мягко удаляет (REVOKED) membership участника. Роли и клубные scope деактивируются; повторный invite возможен только явным новым приглашением.
+
+        **Правила:**
+        - Запрещено удалять участника с ролью >= своей (`403 ROLE_ASSIGNMENT_FORBIDDEN`).
+        - Запрещено удалять последнего `ORG_OWNER` (`409 LAST_OWNER_PROTECTION`).
+        - Удаление фиксируется в audit log; `reason` обязателен для аудита.
+
+        **Идемпотентность:** повторный delete уже REVOKED membership возвращает 204.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/MemberUserId'
+        - $ref: '#/components/parameters/ReasonQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Участник удалён (membership REVOKED).
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/members/{userId}/club-scopes:
+    put:
+      tags:
+        - roles-admin
+      summary: Установить клубный scope админа
+      operationId: setMemberClubScopes
+      description: |-
+        Заменяет список клубов, доступных `CLUB_ADMIN` (полный set, идемпотентно).
+
+        **Правила:**
+        - Применяется только к роли `CLUB_ADMIN` → иначе `422 INVALID_ROLE_SCOPE`.
+        - Клубы должны принадлежать организации membership.
+        - Не менее одного клуба (`minItems: 1`).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/MemberUserId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubScopeUpdateRequest'
+            examples:
+              setScopes:
+                value:
+                  clubIds:
+                    - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                    - 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+      responses:
+        '200':
+          description: Клубный scope обновлён.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Membership'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /reservations:
     post:
       tags:
@@ -2214,6 +2817,17 @@ components:
         - SESSION_NOT_FOUND
         - USER_BLOCKED
         - USER_DEACTIVATED
+        - ORGANIZATION_NOT_FOUND
+        - MEMBER_NOT_FOUND
+        - MEMBERSHIP_NOT_FOUND
+        - INVITATION_NOT_FOUND
+        - ROLE_NOT_FOUND
+        - ROLE_ASSIGNMENT_FORBIDDEN
+        - LAST_OWNER_PROTECTION
+        - MEMBER_ALREADY_EXISTS
+        - MEMBERSHIP_SUSPENDED
+        - MEMBERSHIP_REVOKED
+        - INVALID_ROLE_SCOPE
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -3734,6 +4348,339 @@ components:
         - ADMIN
         - REPLACED
       example: LOGOUT
+    RoleCode:
+      type: string
+      description: 'Машинный код роли RBAC. Иерархия (сверху вниз): `ORG_OWNER` > `CLUB_ADMIN` > `PLAYER`. `PLATFORM_ADMIN` зарезервирован и в MVP не назначается.'
+      enum:
+        - PLAYER
+        - CLUB_ADMIN
+        - ORG_OWNER
+        - PLATFORM_ADMIN
+      example: CLUB_ADMIN
+    RoleScope:
+      type: string
+      description: 'Scope роли: на какой ресурс распространяются права.'
+      enum:
+        - PLATFORM
+        - ORGANIZATION
+        - CLUB
+      example: ORGANIZATION
+    Role:
+      type: object
+      description: Каталожная запись роли RBAC. Каталог системных ролей, не содержит пользовательских данных.
+      required:
+        - code
+        - name
+        - scopeType
+        - hierarchyLevel
+        - isSystem
+        - permissions
+      properties:
+        code:
+          $ref: '#/components/schemas/RoleCode'
+        name:
+          type: string
+          description: Человекочитаемое имя роли.
+          example: Администратор клуба
+        description:
+          type:
+            - string
+            - 'null'
+          description: Назначение роли.
+        scopeType:
+          $ref: '#/components/schemas/RoleScope'
+        hierarchyLevel:
+          type: integer
+          minimum: 1
+          description: |
+            Уровень иерархии для правил назначения ролей:
+            - `1` — PLAYER
+            - `2` — CLUB_ADMIN
+            - `3` — ORG_OWNER
+            - `4` — PLATFORM_ADMIN (зарезервирован)
+
+            Назначать/отзывать можно только роли **строго ниже** своей; изменять участника с ролью **не ниже** своей запрещено.
+          example: 2
+        isSystem:
+          type: boolean
+          description: Системная роль — нельзя модифицировать/удалять.
+          default: true
+        isAssignable:
+          type: boolean
+          description: Можно ли назначить через organization membership. `PLATFORM_ADMIN` в MVP не назначается.
+          default: true
+        permissions:
+          type: array
+          description: Гранты, дающие доступ к операциям API. Проверка на уровне только UI запрещена.
+          items:
+            type: string
+            pattern: ^[a-z0-9_]+(\.[a-z0-9_]+)+$
+          example:
+            - reservation.read.club
+            - reservation.check_in.club
+    MembershipStatus:
+      type: string
+      description: Статус membership (принадлежности пользователя к организации).
+      enum:
+        - INVITED
+        - ACTIVE
+        - SUSPENDED
+        - REVOKED
+      example: ACTIVE
+    Membership:
+      type: object
+      description: Принадлежность пользователя к организации (tenant context для RBAC). Membership служит контейнером ролей; `INVITED` membership — это и есть приглашение.
+      required:
+        - id
+        - organizationId
+        - userId
+        - status
+        - roles
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор membership (используется как идентификатор приглашения).
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+          description: Название организации (для списков игрока).
+        userId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/UserSummary'
+        status:
+          $ref: '#/components/schemas/MembershipStatus'
+        roles:
+          type: array
+          description: Назначенные роли с клубными scope.
+          items:
+            $ref: '#/components/schemas/MemberRole'
+        invitedByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Кто пригласил (Owner/Admin).
+        invitedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        acceptedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Заполняется при принятии приглашения (status → ACTIVE).
+        revokedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        revokeReason:
+          type:
+            - string
+            - 'null'
+          maxLength: 240
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MemberRole:
+      type: object
+      description: Назначенная участнику роль с необязательным клубным scope (для CLUB_ADMIN).
+      required:
+        - code
+      properties:
+        code:
+          $ref: '#/components/schemas/RoleCode'
+        clubIds:
+          type: array
+          description: Клубы, на которые распространяется роль. Обязательно не менее одного для `CLUB_ADMIN`; для `ORG_OWNER` не заполняется (scope — вся организация).
+          items:
+            type: string
+            format: uuid
+          example:
+            - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+    UserSummary:
+      type: object
+      description: Краткое публичное представление пользователя (для списков и аудита). PII маскируется.
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+          description: Отображаемое имя.
+        maskedPhone:
+          type:
+            - string
+            - 'null'
+          maxLength: 20
+          description: Маскированный телефон, например `+7 701 *** 78 90`.
+        status:
+          $ref: '#/components/schemas/UserStatus'
+    MemberInviteRequest:
+      type: object
+      description: Запрос на приглашение участника в организацию (Owner). Создаёт membership со статусом `INVITED`.
+      required:
+        - roleCode
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Существующий пользователь. Альтернативно приглашение по `phone`.
+        phone:
+          type: string
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+          description: Телефон (E.164) для приглашения незарегистрированного пользователя; пользователь будет создан при первом входе.
+        roleCode:
+          $ref: '#/components/schemas/RoleCode'
+        clubIds:
+          type: array
+          description: Клубный scope для `CLUB_ADMIN` (обязателен при этой роли).
+          items:
+            type: string
+            format: uuid
+        message:
+          type: string
+          maxLength: 500
+          description: Сопроводительное сообщение к приглашению.
+    MemberUpdateRequest:
+      type: object
+      description: Обновление участника Owner'ом. Поля применяются атомарно; незаполненные поля не изменяются. Смена ролей — замена полного набора (idempotent set).
+      properties:
+        status:
+          $ref: '#/components/schemas/MembershipStatus'
+          description: Перевод в ACTIVE / SUSPENDED (повторная активация, блокировка).
+        roles:
+          type: array
+          description: Полный новый набор ролей участника (замена). Правила иерархии и last-owner protection применяются сервером.
+          items:
+            $ref: '#/components/schemas/MemberRole'
+    ClubScopeUpdateRequest:
+      type: object
+      description: Установка клубного scope для CLUB_ADMIN (полная замена списка клубов).
+      required:
+        - clubIds
+      properties:
+        clubIds:
+          type: array
+          minItems: 1
+          description: Клубы, доступные админу. Клубы должны принадлежать организации membership.
+          items:
+            type: string
+            format: uuid
+    MyAccess:
+      type: object
+      description: Полный доступ текущего пользователя (AuthContext для фронтенда). Позволяет UI корректно показать/скрыть разделы.
+      required:
+        - userId
+        - platformRoles
+        - memberships
+      properties:
+        userId:
+          type: string
+          format: uuid
+        platformRoles:
+          type: array
+          description: Глобальные (платформенные) роли. Каждый активный пользователь имеет `PLAYER`.
+          items:
+            $ref: '#/components/schemas/RoleCode'
+          example:
+            - PLAYER
+        memberships:
+          type: array
+          description: Tenants пользователя с ролями и клубными scope.
+          items:
+            type: object
+            required:
+              - organizationId
+              - organizationName
+              - status
+              - roles
+            properties:
+              organizationId:
+                type: string
+                format: uuid
+              organizationName:
+                type: string
+                maxLength: 160
+              status:
+                $ref: '#/components/schemas/MembershipStatus'
+              roles:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - code
+                  properties:
+                    code:
+                      $ref: '#/components/schemas/RoleCode'
+                    clubIds:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+    InvitationSummary:
+      type: object
+      description: Приглашение в организацию, ожидающее решения игрока.
+      required:
+        - id
+        - organizationId
+        - organizationName
+        - invitedByUserId
+        - invitedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор membership-приглашения.
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+          maxLength: 160
+        invitedByUserId:
+          type: string
+          format: uuid
+        invitedByDisplayName:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+        invitedAt:
+          type: string
+          format: date-time
+        message:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Срок действия приглашения (конфигурируется организацией; MVP default 7 дней).
   parameters:
     ReservationId:
       name: reservationId
@@ -3959,6 +4906,63 @@ components:
           - ACTIVE
           - REVOKED
       example: ACTIVE
+    OrganizationId:
+      name: organizationId
+      in: path
+      required: true
+      description: Идентификатор организации (tenant scope) (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+    MemberUserId:
+      name: userId
+      in: path
+      required: true
+      description: Идентификатор участника организации (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+    InvitationId:
+      name: invitationId
+      in: path
+      required: true
+      description: Идентификатор приглашения (membership со статусом INVITED) (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: e6f7a8b9-0c1d-4e2f-8a3b-4c5d6e7f8a9b
+    MembershipStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр участников по статусу membership.
+      schema:
+        type: string
+        enum:
+          - INVITED
+          - ACTIVE
+          - SUSPENDED
+          - REVOKED
+      example: ACTIVE
+    RoleQuery:
+      name: role
+      in: query
+      required: false
+      description: Фильтр участников по коду роли.
+      schema:
+        $ref: '#/components/schemas/RoleCode'
+      example: CLUB_ADMIN
+    ReasonQuery:
+      name: reason
+      in: query
+      required: false
+      description: Причина операции (например, удаления участника) для аудита.
+      schema:
+        type: string
+        maxLength: 240
+      example: Сотрудник уволен
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -4472,3 +5476,129 @@ components:
         meta:
           requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
           timestamp: '2026-08-04T10:13:06Z'
+    RoleCatalogExample:
+      summary: Каталог системных ролей
+      value:
+        data:
+          - code: PLAYER
+            name: Игрок
+            description: Глобальная роль; присваивается автоматически при регистрации.
+            scopeType: PLATFORM
+            hierarchyLevel: 1
+            isSystem: true
+            isAssignable: false
+            permissions:
+              - profile.read.self
+              - reservation.read.self
+              - reservation.create.self
+              - reservation.cancel.self
+              - reservation.extend.self
+          - code: CLUB_ADMIN
+            name: Администратор клуба
+            description: Операции в рамках одного или нескольких клубов организации.
+            scopeType: CLUB
+            hierarchyLevel: 2
+            isSystem: true
+            isAssignable: true
+            permissions:
+              - reservation.read.club
+              - reservation.create.club
+              - reservation.check_in.club
+              - reservation.mark_no_show.club
+              - reservation.extension.approve.club
+              - reservation.move.club
+              - computer.manage.club
+              - pricing.manage.club
+              - club.settings.manage
+          - code: ORG_OWNER
+            name: Владелец организации
+            description: Полный контроль над всеми клубами и участниками организации.
+            scopeType: ORGANIZATION
+            hierarchyLevel: 3
+            isSystem: true
+            isAssignable: true
+            permissions:
+              - membership.manage.organization
+              - club.manage.organization
+              - analytics.read.organization
+              - reservation.manage.organization
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:20:00Z'
+    MyAccessExample:
+      summary: Доступ текущего пользователя (игрок + админ одного клуба)
+      value:
+        data:
+          userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          platformRoles:
+            - PLAYER
+          memberships:
+            - organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+              organizationName: Caspian Esports
+              status: ACTIVE
+              roles:
+                - code: CLUB_ADMIN
+                  clubIds:
+                    - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:20:00Z'
+    MembersListExample:
+      summary: Участники организации (список для Owner)
+      value:
+        data:
+          - id: f1e2d3c4-b5a6-4c7d-8e9f-0a1b2c3d4e5f
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            organizationName: Caspian Esports
+            userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            user:
+              id: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+              displayName: Dastan
+              maskedPhone: +7 701 *** 78 90
+              status: ACTIVE
+            status: ACTIVE
+            roles:
+              - code: ORG_OWNER
+            invitedAt: '2026-07-01T09:00:00Z'
+            acceptedAt: '2026-07-01T09:05:00Z'
+            createdAt: '2026-07-01T09:00:00Z'
+            updatedAt: '2026-07-01T09:05:00Z'
+          - id: a2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            organizationName: Caspian Esports
+            userId: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+            user:
+              id: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+              displayName: Aigerim
+              maskedPhone: +7 705 *** 12 34
+              status: ACTIVE
+            status: ACTIVE
+            roles:
+              - code: CLUB_ADMIN
+                clubIds:
+                  - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            invitedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            invitedAt: '2026-07-10T12:00:00Z'
+            acceptedAt: '2026-07-10T14:30:00Z'
+            createdAt: '2026-07-10T12:00:00Z'
+            updatedAt: '2026-07-10T14:30:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    InvitationExample:
+      summary: Ожидающее приглашение в организацию
+      value:
+        data:
+          id: e6f7a8b9-0c1d-4e2f-8a3b-4c5d6e7f8a9b
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          organizationName: Caspian Esports
+          invitedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          invitedByDisplayName: Dastan
+          invitedAt: '2026-08-04T10:30:00Z'
+          message: Приглашаем вас в команду администраторов
+          expiresAt: '2026-08-11T10:30:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:31:00Z'

@@ -1,0 +1,56 @@
+type: object
+description: Принадлежность пользователя к организации (tenant context для RBAC). Membership служит контейнером ролей; `INVITED` membership — это и есть приглашение.
+required:
+  - id
+  - organizationId
+  - userId
+  - status
+  - roles
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор membership (используется как идентификатор приглашения).
+  organizationId:
+    type: string
+    format: uuid
+  organizationName:
+    type: [string, 'null']
+    maxLength: 160
+    description: Название организации (для списков игрока).
+  userId:
+    type: string
+    format: uuid
+  user:
+    $ref: './UserSummary.yaml'
+  status:
+    $ref: './MembershipStatus.yaml'
+  roles:
+    type: array
+    description: Назначенные роли с клубными scope.
+    items:
+      $ref: './MemberRole.yaml'
+  invitedByUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Кто пригласил (Owner/Admin).
+  invitedAt:
+    type: [string, 'null']
+    format: date-time
+  acceptedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Заполняется при принятии приглашения (status → ACTIVE).
+  revokedAt:
+    type: [string, 'null']
+    format: date-time
+  revokeReason:
+    type: [string, 'null']
+    maxLength: 240
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

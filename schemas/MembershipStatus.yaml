@@ -1,0 +1,8 @@
+type: string
+description: Статус membership (принадлежности пользователя к организации).
+enum:
+  - INVITED
+  - ACTIVE
+  - SUSPENDED
+  - REVOKED
+example: ACTIVE

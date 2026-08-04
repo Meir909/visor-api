@@ -1,0 +1,12 @@
+type: object
+description: Установка клубного scope для CLUB_ADMIN (полная замена списка клубов).
+required:
+  - clubIds
+properties:
+  clubIds:
+    type: array
+    minItems: 1
+    description: Клубы, доступные админу. Клубы должны принадлежать организации membership.
+    items:
+      type: string
+      format: uuid

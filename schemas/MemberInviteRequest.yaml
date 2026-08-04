@@ -1,0 +1,26 @@
+type: object
+description: Запрос на приглашение участника в организацию (Owner). Создаёт membership со статусом `INVITED`.
+required:
+  - roleCode
+properties:
+  userId:
+    type: string
+    format: uuid
+    description: Существующий пользователь. Альтернативно приглашение по `phone`.
+  phone:
+    type: string
+    maxLength: 20
+    pattern: '^\+[1-9]\d{1,14}$'
+    description: Телефон (E.164) для приглашения незарегистрированного пользователя; пользователь будет создан при первом входе.
+  roleCode:
+    $ref: './RoleCode.yaml'
+  clubIds:
+    type: array
+    description: Клубный scope для `CLUB_ADMIN` (обязателен при этой роли).
+    items:
+      type: string
+      format: uuid
+  message:
+    type: string
+    maxLength: 500
+    description: Сопроводительное сообщение к приглашению.

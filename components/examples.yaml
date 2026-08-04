@@ -413,3 +413,133 @@ UserExample:
     meta:
       requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
       timestamp: '2026-08-04T10:13:06Z'
+
+RoleCatalogExample:
+  summary: Каталог системных ролей
+  value:
+    data:
+      - code: PLAYER
+        name: Игрок
+        description: Глобальная роль; присваивается автоматически при регистрации.
+        scopeType: PLATFORM
+        hierarchyLevel: 1
+        isSystem: true
+        isAssignable: false
+        permissions:
+          - profile.read.self
+          - reservation.read.self
+          - reservation.create.self
+          - reservation.cancel.self
+          - reservation.extend.self
+      - code: CLUB_ADMIN
+        name: Администратор клуба
+        description: Операции в рамках одного или нескольких клубов организации.
+        scopeType: CLUB
+        hierarchyLevel: 2
+        isSystem: true
+        isAssignable: true
+        permissions:
+          - reservation.read.club
+          - reservation.create.club
+          - reservation.check_in.club
+          - reservation.mark_no_show.club
+          - reservation.extension.approve.club
+          - reservation.move.club
+          - computer.manage.club
+          - pricing.manage.club
+          - club.settings.manage
+      - code: ORG_OWNER
+        name: Владелец организации
+        description: Полный контроль над всеми клубами и участниками организации.
+        scopeType: ORGANIZATION
+        hierarchyLevel: 3
+        isSystem: true
+        isAssignable: true
+        permissions:
+          - membership.manage.organization
+          - club.manage.organization
+          - analytics.read.organization
+          - reservation.manage.organization
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:20:00Z'
+
+MyAccessExample:
+  summary: Доступ текущего пользователя (игрок + админ одного клуба)
+  value:
+    data:
+      userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      platformRoles:
+        - PLAYER
+      memberships:
+        - organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          organizationName: Caspian Esports
+          status: ACTIVE
+          roles:
+            - code: CLUB_ADMIN
+              clubIds:
+                - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:20:00Z'
+
+MembersListExample:
+  summary: Участники организации (список для Owner)
+  value:
+    data:
+      - id: f1e2d3c4-b5a6-4c7d-8e9f-0a1b2c3d4e5f
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        organizationName: Caspian Esports
+        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        user:
+          id: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          displayName: Dastan
+          maskedPhone: +7 701 *** 78 90
+          status: ACTIVE
+        status: ACTIVE
+        roles:
+          - code: ORG_OWNER
+        invitedAt: '2026-07-01T09:00:00Z'
+        acceptedAt: '2026-07-01T09:05:00Z'
+        createdAt: '2026-07-01T09:00:00Z'
+        updatedAt: '2026-07-01T09:05:00Z'
+      - id: a2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        organizationName: Caspian Esports
+        userId: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+        user:
+          id: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+          displayName: Aigerim
+          maskedPhone: +7 705 *** 12 34
+          status: ACTIVE
+        status: ACTIVE
+        roles:
+          - code: CLUB_ADMIN
+            clubIds:
+              - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        invitedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        invitedAt: '2026-07-10T12:00:00Z'
+        acceptedAt: '2026-07-10T14:30:00Z'
+        createdAt: '2026-07-10T12:00:00Z'
+        updatedAt: '2026-07-10T14:30:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+InvitationExample:
+  summary: Ожидающее приглашение в организацию
+  value:
+    data:
+      id: e6f7a8b9-0c1d-4e2f-8a3b-4c5d6e7f8a9b
+      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      organizationName: Caspian Esports
+      invitedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      invitedByDisplayName: Dastan
+      invitedAt: '2026-08-04T10:30:00Z'
+      message: Приглашаем вас в команду администраторов
+      expiresAt: '2026-08-11T10:30:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:31:00Z'

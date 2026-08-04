@@ -1,0 +1,19 @@
+type: object
+description: Краткое публичное представление пользователя (для списков и аудита). PII маскируется.
+required:
+  - id
+  - status
+properties:
+  id:
+    type: string
+    format: uuid
+  displayName:
+    type: [string, 'null']
+    maxLength: 120
+    description: Отображаемое имя.
+  maskedPhone:
+    type: [string, 'null']
+    maxLength: 20
+    description: Маскированный телефон, например `+7 701 *** 78 90`.
+  status:
+    $ref: './UserStatus.yaml'

@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны **модули Reservations** (ядро платформы) и **Auth** (аутентификация и сессии). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии) и **Roles** (RBAC: владелец → админ → игрок). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -352,7 +352,94 @@ tags:
       - **ANY_AUTHENTICATED** — `auth.session.read.self`, `auth.session.revoke.self`, `auth.logout.self`.
       - **PLAYER** — `profile.read.self`.
 
+  - name: roles
+    description: |-
+      # Роли и доступ (Player)
+
+      Каталог ролей, мой доступ (`/me/roles`), мои организации, приглашения и их принятие/отклонение.
+
+      **Иерархия ролей:**
+
+      ```mermaid
+      flowchart TD
+          O[ORG_OWNER<br/>organization-wide] --> A[CLUB_ADMIN<br/>club scope]
+          A --> P[PLAYER<br/>global]
+      ```
+
+      - **PLAYER** (уровень 1) — глобальная роль, присваивается автоматически при регистрации.
+      - **CLUB_ADMIN** (уровень 2) — операции в рамках назначенных клубов.
+      - **ORG_OWNER** (уровень 3) — все клубы, участники и аналитика организации.
+      - **PLATFORM_ADMIN** (уровень 4) — зарезервирован, в MVP не назначается.
+
+      Правила назначения (см. тег `roles-admin`): назначать/отзывать можно только роли строго ниже своей; изменять участника с ролью не ниже своей запрещено; последнего владельца нельзя удалить.
+
+  - name: roles-admin
+    description: |-
+      # Роли и доступ (Admin / Owner)
+
+      Управление участниками организации: приглашения, роли, статусы и клубные scope.
+
+      **Разрешения:** `membership.manage.organization` — только ORG_OWNER.
+
+      ## Проверка назначения роли
+
+      ```mermaid
+      flowchart TD
+          M[Вызывающий: ORG_OWNER?] -- No --> F1[403 FORBIDDEN]
+          M -- Yes --> H{Целевой уровень роли<br/>< собственного?}
+          H -- No --> F2[403 ROLE_ASSIGNMENT_FORBIDDEN]
+          H -- Yes --> L{Удаляем/понижаем<br/>последнего ORG_OWNER?}
+          L -- Yes --> C[409 LAST_OWNER_PROTECTION]
+          L -- No --> S{CLUB_ADMIN имеет<br/>клубный scope?}
+          S -- No --> I[422 INVALID_ROLE_SCOPE]
+          S -- Yes --> OK[Применить + audit]
+      ```
+
+      ## Последовательность приглашения
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant O as Owner (Next.js)
+          participant API as Visora API
+          participant SVC as Roles Service
+          participant DB as PostgreSQL
+          participant U as Player
+
+          O->>API: POST /api/v1/organizations/{orgId}/members
+          API->>SVC: InviteMemberCommand
+          SVC->>SVC: hierarchy + scope check
+          SVC->>DB: INSERT membership (INVITED) + outbox
+          SVC-->>API: Membership
+          API-->>O: 201 Created
+          API-->>U: notification (WebSocket / me/invitations)
+          U->>API: POST /api/v1/me/invitations/{id}/accept
+          API->>SVC: AcceptInvitationCommand
+          SVC->>DB: INVITED → ACTIVE + accepted_at
+          API-->>U: 200 Membership
+      ```
+
+      Все изменения ролей/статусов аудируются (actor, tenant, before/after diff, IP, correlation id).
+
 paths:
+  '/roles':
+    $ref: './paths/roles.yaml#/~1roles'
+  '/me/roles':
+    $ref: './paths/roles.yaml#/~1me~1roles'
+  '/me/memberships':
+    $ref: './paths/roles.yaml#/~1me~1memberships'
+  '/me/invitations':
+    $ref: './paths/roles.yaml#/~1me~1invitations'
+  '/me/invitations/{invitationId}/accept':
+    $ref: './paths/roles.yaml#/~1me~1invitations~1{invitationId}~1accept'
+  '/me/invitations/{invitationId}/decline':
+    $ref: './paths/roles.yaml#/~1me~1invitations~1{invitationId}~1decline'
+  '/organizations/{organizationId}/members':
+    $ref: './paths/roles.yaml#/~1organizations~1{organizationId}~1members'
+  '/organizations/{organizationId}/members/{userId}':
+    $ref: './paths/roles.yaml#/~1organizations~1{organizationId}~1members~1{userId}'
+  '/organizations/{organizationId}/members/{userId}/club-scopes':
+    $ref: './paths/roles.yaml#/~1organizations~1{organizationId}~1members~1{userId}~1club-scopes'
   '/reservations':
     $ref: './paths/reservations.yaml#/~1reservations'
   '/reservations/current':
@@ -515,6 +602,30 @@ components:
       $ref: './schemas/RevokeSessionRequest.yaml'
     SessionRevokeReason:
       $ref: './schemas/SessionRevokeReason.yaml'
+    RoleCode:
+      $ref: './schemas/RoleCode.yaml'
+    RoleScope:
+      $ref: './schemas/RoleScope.yaml'
+    Role:
+      $ref: './schemas/Role.yaml'
+    MembershipStatus:
+      $ref: './schemas/MembershipStatus.yaml'
+    Membership:
+      $ref: './schemas/Membership.yaml'
+    MemberRole:
+      $ref: './schemas/MemberRole.yaml'
+    UserSummary:
+      $ref: './schemas/UserSummary.yaml'
+    MemberInviteRequest:
+      $ref: './schemas/MemberInviteRequest.yaml'
+    MemberUpdateRequest:
+      $ref: './schemas/MemberUpdateRequest.yaml'
+    ClubScopeUpdateRequest:
+      $ref: './schemas/ClubScopeUpdateRequest.yaml'
+    MyAccess:
+      $ref: './schemas/MyAccess.yaml'
+    InvitationSummary:
+      $ref: './schemas/InvitationSummary.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -562,6 +673,18 @@ components:
       $ref: './components/parameters.yaml#/DeviceIdHeader'
     SessionStatusQuery:
       $ref: './components/parameters.yaml#/SessionStatusQuery'
+    OrganizationId:
+      $ref: './components/parameters.yaml#/OrganizationId'
+    MemberUserId:
+      $ref: './components/parameters.yaml#/MemberUserId'
+    InvitationId:
+      $ref: './components/parameters.yaml#/InvitationId'
+    MembershipStatusQuery:
+      $ref: './components/parameters.yaml#/MembershipStatusQuery'
+    RoleQuery:
+      $ref: './components/parameters.yaml#/RoleQuery'
+    ReasonQuery:
+      $ref: './components/parameters.yaml#/ReasonQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -610,3 +733,11 @@ components:
       $ref: './components/examples.yaml#/AuthSessionsExample'
     UserExample:
       $ref: './components/examples.yaml#/UserExample'
+    RoleCatalogExample:
+      $ref: './components/examples.yaml#/RoleCatalogExample'
+    MyAccessExample:
+      $ref: './components/examples.yaml#/MyAccessExample'
+    MembersListExample:
+      $ref: './components/examples.yaml#/MembersListExample'
+    InvitationExample:
+      $ref: './components/examples.yaml#/InvitationExample'

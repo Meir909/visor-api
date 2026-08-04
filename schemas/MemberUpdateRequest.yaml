@@ -1,0 +1,11 @@
+type: object
+description: Обновление участника Owner'ом. Поля применяются атомарно; незаполненные поля не изменяются. Смена ролей — замена полного набора (idempotent set).
+properties:
+  status:
+    $ref: './MembershipStatus.yaml'
+    description: Перевод в ACTIVE / SUSPENDED (повторная активация, блокировка).
+  roles:
+    type: array
+    description: Полный новый набор ролей участника (замена). Правила иерархии и last-owner protection применяются сервером.
+    items:
+      $ref: './MemberRole.yaml'

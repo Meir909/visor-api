@@ -1,0 +1,35 @@
+type: object
+description: Приглашение в организацию, ожидающее решения игрока.
+required:
+  - id
+  - organizationId
+  - organizationName
+  - invitedByUserId
+  - invitedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор membership-приглашения.
+  organizationId:
+    type: string
+    format: uuid
+  organizationName:
+    type: string
+    maxLength: 160
+  invitedByUserId:
+    type: string
+    format: uuid
+  invitedByDisplayName:
+    type: [string, 'null']
+    maxLength: 120
+  invitedAt:
+    type: string
+    format: date-time
+  message:
+    type: [string, 'null']
+    maxLength: 500
+  expiresAt:
+    type: [string, 'null']
+    format: date-time
+    description: Срок действия приглашения (конфигурируется организацией; MVP default 7 дней).

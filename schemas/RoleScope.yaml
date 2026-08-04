@@ -1,0 +1,7 @@
+type: string
+description: 'Scope роли: на какой ресурс распространяются права.'
+enum:
+  - PLATFORM
+  - ORGANIZATION
+  - CLUB
+example: ORGANIZATION

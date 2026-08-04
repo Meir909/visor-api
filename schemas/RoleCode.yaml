@@ -1,0 +1,8 @@
+type: string
+description: 'Машинный код роли RBAC. Иерархия (сверху вниз): `ORG_OWNER` > `CLUB_ADMIN` > `PLAYER`. `PLATFORM_ADMIN` зарезервирован и в MVP не назначается.'
+enum:
+  - PLAYER
+  - CLUB_ADMIN
+  - ORG_OWNER
+  - PLATFORM_ADMIN
+example: CLUB_ADMIN

@@ -1,0 +1,15 @@
+type: object
+description: Назначенная участнику роль с необязательным клубным scope (для CLUB_ADMIN).
+required:
+  - code
+properties:
+  code:
+    $ref: './RoleCode.yaml'
+  clubIds:
+    type: array
+    description: Клубы, на которые распространяется роль. Обязательно не менее одного для `CLUB_ADMIN`; для `ORG_OWNER` не заполняется (scope — вся организация).
+    items:
+      type: string
+      format: uuid
+    example:
+      - 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
