@@ -1,0 +1,7 @@
+type: string
+description: Категория рекомендации владельцу (детерминированные правила MVP).
+enum:
+  - PRICING_OPPORTUNITY
+  - PROMOTION_SUGGESTION
+  - HOURS_OPTIMIZATION
+  - RESOURCE_UTILIZATION

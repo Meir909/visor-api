@@ -1,0 +1,198 @@
+# =====================================================================
+# Visora API — Paths модуля Owner (сетевые read models организации)
+# =====================================================================
+
+'/organizations/{organizationId}/owner/dashboard':
+  get:
+    tags:
+      - owner
+    summary: Консолидированный дашборд владельца
+    operationId: getOwnerDashboard
+    description: |-
+      Единый дашборд организации: итоги выручки, загрузки, конверсии, сеть клубов, число сотрудников и топ ресурс.
+
+      **Правила:**
+      - Разрешение `analytics.read.organization` (ORG_OWNER).
+      - Данные — из агрегатов, не из операционных таблиц.
+      - Период ограничен ретенцией агрегатов (31 день).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Дашборд владельца.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/OwnerDashboard.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              dashboard:
+                $ref: '../components/examples.yaml#/OwnerDashboardExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/owner/network':
+  get:
+    tags:
+      - owner
+    summary: Сеть клубов организации
+    operationId: getOwnerNetwork
+    description: |-
+      Сетевая сводка: каждый клуб с выручкой, загрузкой, конверсией и итоги по сети. Показывает, какие клубы тянут результат, а какие проседают.
+
+      **Правила:**
+      - Разрешение `analytics.read.organization` (ORG_OWNER).
+      - Клубы упорядочены по выручке (убывание).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Сеть клубов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/NetworkSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              network:
+                $ref: '../components/examples.yaml#/NetworkSnapshotExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/owner/staff':
+  get:
+    tags:
+      - owner
+    summary: Сотрудники организации
+    operationId: listOwnerStaff
+    description: |-
+      Сотрудники организации и их скоупы: роль, клубы, статус и время назначения.
+
+      **Правила:**
+      - Разрешение `membership.manage.organization` (ORG_OWNER).
+      - Read-only: изменения персонала — через модуль Roles/Organizations.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/MembershipStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Сотрудники организации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/StaffOverview.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              staff:
+                $ref: '../components/examples.yaml#/StaffOverviewExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/owner/recommendations':
+  get:
+    tags:
+      - owner
+    summary: Рекомендации владельцу
+    operationId: getOwnerRecommendations
+    description: |-
+      Детерминированные рекомендации на основе аналитики MVP: ценовые возможности, промо, оптимизация часов и использование ресурсов.
+
+      **Правила (MVP):**
+      - Пиковые часы без пиковой цены → `PRICING_OPPORTUNITY`.
+      - Низкая загрузка в оффпик → `PROMOTION_SUGGESTION`.
+      - Закрытие в пиковые часы → `HOURS_OPTIMIZATION`.
+      - Ресурс с загрузкой существенно ниже среднего по клубу → `RESOURCE_UTILIZATION`.
+      - Рекомендации рассчитываются на лету из агрегатов; ничего не записывается.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/AnalyticsFrom'
+      - $ref: '../components/parameters.yaml#/AnalyticsTo'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Рекомендации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Recommendation.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              recommendations:
+                $ref: '../components/examples.yaml#/RecommendationsExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'

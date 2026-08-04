@@ -1,0 +1,65 @@
+type: object
+description: Сетевая сводка клубов организации за период (read model владельца).
+required:
+  - period
+  - currency
+  - summary
+  - clubs
+properties:
+  period:
+    $ref: './AnalyticsPeriod.yaml'
+  currency:
+    type: string
+    description: Валюта расчётов (ISO 4217).
+    example: KZT
+  generatedAt:
+    type: string
+    format: date-time
+    description: Время формирования сводки.
+    example: '2026-08-04T11:00:00Z'
+  summary:
+    type: object
+    description: Итоги по сети клубов.
+    required:
+      - totalClubs
+      - activeClubs
+      - totalRevenueMinor
+      - totalBookings
+      - avgOccupancyRate
+      - avgConversionRate
+    properties:
+      totalClubs:
+        type: integer
+        description: Всего клубов в организации.
+        example: 2
+      activeClubs:
+        type: integer
+        description: Клубов в статусе ACTIVE.
+        example: 2
+      totalRevenueMinor:
+        type: string
+        description: Суммарная выручка в minor units.
+        example: '128450000'
+      totalBookings:
+        type: integer
+        description: Суммарные завершённые бронирования.
+        example: 4320
+      avgOccupancyRate:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 1
+        description: Средняя загрузка по сети (0..1).
+        example: 0.42
+      avgConversionRate:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 1
+        description: Средняя конверсия по сети (0..1).
+        example: 0.34
+  clubs:
+    type: array
+    description: Клубы с их показателями, упорядоченные по выручке (убывание).
+    items:
+      $ref: './ClubNetworkPoint.yaml'

@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы) и **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони). Остальные модули (Pricing, Notifications, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации). Остальные модули (Pricing, Notifications, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -779,7 +779,38 @@ tags:
 
       **Ошибки:** `DISCOUNT_CODE_TAKEN`, `DISCOUNT_TYPE_CONFLICT`, `DISCOUNT_INVALID_PERIOD`, `DISCOUNT_EXPIRED`, `DISCOUNT_LIMIT_REACHED`.
 
+  - name: owner
+    description: |-
+      # Владелец (Owner / Organization read models)
+
+      Сетевые read models организации: консолидированный дашборд, сеть клубов с KPI, сотрудники и детерминированные рекомендации.
+
+      **Разрешения:** `analytics.read.organization` (дашборд/сеть/рекомендации), `membership.manage.organization` (сотрудники). Только ORG_OWNER.
+
+      **Ключевое правило (7.14):** владелец читает **агрегаты**, а не сканирует операционные таблицы на каждый запрос. Сводки выручки/загрузки/конверсии/топ-ресурсов по организации живут в модуле Analytics; Owner добавляет **сетевое представление** по клубам, сводку по персоналу и **рекомендации**.
+
+      ## Рекомендации (детерминированные правила MVP)
+
+      ```mermaid
+      flowchart TD
+          A[Аналитика: загрузка, пиковые часы, ресурсы] --> Rules{Правила}
+          Rules -->|Пик без пиковой цены| P1[PRICING_OPPORTUNITY]
+          Rules -->|Низкий оффпик| P2[PROMOTION_SUGGESTION]
+          Rules -->|Закрытие в пик| P3[HOURS_OPTIMIZATION]
+          Rules -->|Ресурс ниже среднего| P4[RESOURCE_UTILIZATION]
+      ```
+
+      Рекомендации считаются на лету и не записываются.
+
 paths:
+  '/organizations/{organizationId}/owner/dashboard':
+    $ref: './paths/owner.yaml#/~1organizations~1{organizationId}~1owner~1dashboard'
+  '/organizations/{organizationId}/owner/network':
+    $ref: './paths/owner.yaml#/~1organizations~1{organizationId}~1owner~1network'
+  '/organizations/{organizationId}/owner/staff':
+    $ref: './paths/owner.yaml#/~1organizations~1{organizationId}~1owner~1staff'
+  '/organizations/{organizationId}/owner/recommendations':
+    $ref: './paths/owner.yaml#/~1organizations~1{organizationId}~1owner~1recommendations'
   '/organizations/{organizationId}/clubs/{clubId}/discounts':
     $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1discounts'
   '/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}':
@@ -1238,6 +1269,20 @@ components:
       $ref: './schemas/Redemption.yaml'
     WalkInReservationRequest:
       $ref: './schemas/WalkInReservationRequest.yaml'
+    RecommendationType:
+      $ref: './schemas/RecommendationType.yaml'
+    RecommendationPriority:
+      $ref: './schemas/RecommendationPriority.yaml'
+    Recommendation:
+      $ref: './schemas/Recommendation.yaml'
+    ClubNetworkPoint:
+      $ref: './schemas/ClubNetworkPoint.yaml'
+    NetworkSnapshot:
+      $ref: './schemas/NetworkSnapshot.yaml'
+    StaffOverview:
+      $ref: './schemas/StaffOverview.yaml'
+    OwnerDashboard:
+      $ref: './schemas/OwnerDashboard.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1473,3 +1518,11 @@ components:
       $ref: './components/examples.yaml#/WalkInReservationRequestExample'
     WalkInReservationResponseExample:
       $ref: './components/examples.yaml#/WalkInReservationResponseExample'
+    OwnerDashboardExample:
+      $ref: './components/examples.yaml#/OwnerDashboardExample'
+    NetworkSnapshotExample:
+      $ref: './components/examples.yaml#/NetworkSnapshotExample'
+    StaffOverviewExample:
+      $ref: './components/examples.yaml#/StaffOverviewExample'
+    RecommendationsExample:
+      $ref: './components/examples.yaml#/RecommendationsExample'

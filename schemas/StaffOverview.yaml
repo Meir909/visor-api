@@ -1,0 +1,55 @@
+type: object
+description: Сводка по сотруднику организации и его скоупу.
+required:
+  - userId
+  - name
+  - email
+  - role
+  - status
+  - clubIds
+  - clubNames
+  - assignedAt
+properties:
+  userId:
+    type: string
+    format: uuid
+    description: Идентификатор пользователя.
+    example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+  name:
+    type: string
+    description: Имя сотрудника.
+    example: Айгерим Нурланова
+  email:
+    type: string
+    format: email
+    description: Email сотрудника.
+    example: aigerim@arena.kz
+  role:
+    $ref: './RoleCode.yaml'
+  status:
+    $ref: './MembershipStatus.yaml'
+  clubIds:
+    type: array
+    description: Клубы, на которые распространяется роль (для ORG_OWNER — все клубы организации).
+    items:
+      type: string
+      format: uuid
+    example:
+      - 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+  clubNames:
+    type: array
+    description: Названия клубов скоупа.
+    items:
+      type: string
+    example:
+      - Cyber Arena
+  assignedAt:
+    type: string
+    format: date-time
+    description: Время назначения роли.
+    example: '2026-06-01T09:00:00Z'
+  lastActiveAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время последней активности (или null).
+    example: '2026-08-04T09:20:00Z'

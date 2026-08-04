@@ -1,0 +1,82 @@
+type: object
+description: Консолидированный дашборд владельца организации за период.
+required:
+  - period
+  - currency
+  - generatedAt
+  - totals
+  - network
+  - topResource
+  - staffCount
+properties:
+  period:
+    $ref: './AnalyticsPeriod.yaml'
+  currency:
+    type: string
+    description: Валюта расчётов (ISO 4217).
+    example: KZT
+  generatedAt:
+    type: string
+    format: date-time
+    description: Время формирования дашборда.
+    example: '2026-08-04T11:00:00Z'
+  totals:
+    type: object
+    description: Итоги организации.
+    required:
+      - revenueMinor
+      - bookings
+      - avgOccupancyRate
+      - conversionRate
+    properties:
+      revenueMinor:
+        type: string
+        description: Суммарная выручка в minor units.
+        example: '128450000'
+      bookings:
+        type: integer
+        description: Завершённые бронирования.
+        example: 4320
+      avgOccupancyRate:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 1
+        example: 0.42
+      conversionRate:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 1
+        example: 0.34
+  network:
+    type: object
+    description: Сводка по сети клубов.
+    required:
+      - totalClubs
+      - activeClubs
+    properties:
+      totalClubs:
+        type: integer
+        example: 2
+      activeClubs:
+        type: integer
+        example: 2
+  staffCount:
+    type: integer
+    description: Количество активных сотрудников организации.
+    example: 7
+  topResource:
+    description: Самый популярный ресурс организации (или null).
+    allOf:
+      - $ref: './PopularResource.yaml'
+    example:
+      rank: 1
+      resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+      name: PC 12
+      zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+      zoneName: VIP Zone 2
+      bookings: 87
+      occupiedHours: 312.5
+      revenue: '4217500'
+      occupancyRate: 0.81

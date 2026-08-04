@@ -1,0 +1,6 @@
+type: string
+description: Приоритет рекомендации.
+enum:
+  - HIGH
+  - MEDIUM
+  - LOW

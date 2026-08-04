@@ -1,0 +1,61 @@
+type: object
+description: Рекомендация владельцу, построенная на детерминированных правилах MVP из аналитики.
+required:
+  - id
+  - type
+  - priority
+  - title
+  - description
+  - rationale
+  - suggestedAction
+  - generatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор рекомендации.
+    example: 7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f
+  type:
+    $ref: './RecommendationType.yaml'
+  priority:
+    $ref: './RecommendationPriority.yaml'
+  title:
+    type: string
+    description: Краткое название.
+    example: Поднять цену в пиковые часы
+  description:
+    type: string
+    description: Развёрнутое описание.
+    example: С 20:00 до 22:00 загрузка стабильно выше 85% две недели подряд
+  rationale:
+    type: string
+    description: Правило/данные, на которых построена рекомендация.
+    example: 'Пиковые часы 20:00-22:00, средняя загрузка 0.87, отсутствует пиковая надбавка'
+  suggestedAction:
+    type: string
+    description: Конкретное предложенное действие.
+    example: Добавить часовую надбавку или специальный тариф на 20:00-22:00
+  targetClubId:
+    type: [string, 'null']
+    format: uuid
+    description: Клуб, к которому относится рекомендация (или null — вся организация).
+    example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+  targetResourceId:
+    type: [string, 'null']
+    format: uuid
+    description: Конкретный ресурс (для RESOURCE_UTILIZATION) или null.
+    example: 3fa85f64-5717-4562-b3fc-2c963f66afa7
+  impactValueMinor:
+    type: [string, 'null']
+    pattern: '^\d+$'
+    description: Оценка потенциального роста выручки в minor units (или null).
+    example: '1200000'
+  impactDescription:
+    type: [string, 'null']
+    description: Пояснение к потенциальному влиянию.
+    example: До +12% выручки в часы пик при загрузке 0.87
+  generatedAt:
+    type: string
+    format: date-time
+    description: Время генерации рекомендации.
+    example: '2026-08-04T11:00:00Z'

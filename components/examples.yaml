@@ -1556,3 +1556,166 @@ WalkInReservationResponseExample:
     meta:
       requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
       timestamp: '2026-08-04T10:58:00Z'
+
+OwnerDashboardExample:
+  summary: Консолидированный дашборд владельца
+  value:
+    data:
+      period:
+        from: '2026-07-04T00:00:00Z'
+        to: '2026-08-04T00:00:00Z'
+      currency: KZT
+      generatedAt: '2026-08-04T11:00:00Z'
+      totals:
+        revenueMinor: '128450000'
+        bookings: 4320
+        avgOccupancyRate: 0.42
+        conversionRate: 0.34
+      network:
+        totalClubs: 2
+        activeClubs: 2
+      staffCount: 7
+      topResource:
+        rank: 1
+        resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name: PC 12
+        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        zoneName: VIP Zone 2
+        bookings: 87
+        occupiedHours: 312.5
+        revenue: '4217500'
+        occupancyRate: 0.81
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T11:00:00Z'
+
+NetworkSnapshotExample:
+  summary: Сеть клубов организации
+  value:
+    data:
+      period:
+        from: '2026-07-28T00:00:00Z'
+        to: '2026-08-04T00:00:00Z'
+      currency: KZT
+      generatedAt: '2026-08-04T11:00:00Z'
+      summary:
+        totalClubs: 2
+        activeClubs: 2
+        totalRevenueMinor: '42300000'
+        totalBookings: 1390
+        avgOccupancyRate: 0.47
+        avgConversionRate: 0.47
+      clubs:
+        - clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          clubName: Cyber Arena
+          clubStatus: ACTIVE
+          revenueMinor: '42300000'
+          bookings: 1390
+          occupiedHours: 12500
+          occupancyRate: 0.47
+          conversionRate: 0.47
+          activeResources: 24
+          topResourceName: PC 12
+        - clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+          clubName: Pixel Lab
+          clubStatus: ACTIVE
+          revenueMinor: '21400000'
+          bookings: 720
+          occupiedHours: 6400
+          occupancyRate: 0.38
+          conversionRate: 0.41
+          activeResources: 16
+          topResourceName: VR Room 2
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T11:00:00Z'
+
+StaffOverviewExample:
+  summary: Сотрудники организации
+  value:
+    data:
+      - userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        name: Айгерим Нурланова
+        email: aigerim@arena.kz
+        role: ORG_OWNER
+        status: ACTIVE
+        clubIds:
+          - 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          - 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+        clubNames:
+          - Cyber Arena
+          - Pixel Lab
+        assignedAt: '2026-06-01T09:00:00Z'
+        lastActiveAt: '2026-08-04T09:20:00Z'
+      - userId: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+        name: Дмитрий Ким
+        email: dkim@arena.kz
+        role: CLUB_ADMIN
+        status: ACTIVE
+        clubIds:
+          - 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        clubNames:
+          - Cyber Arena
+        assignedAt: '2026-07-10T14:30:00Z'
+        lastActiveAt: '2026-08-04T08:45:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 7
+      hasNextPage: false
+
+RecommendationsExample:
+  summary: Рекомендации владельцу
+  value:
+    data:
+      - id: 7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f
+        type: PRICING_OPPORTUNITY
+        priority: HIGH
+        title: Поднять цену в пиковые часы
+        description: С 20:00 до 22:00 загрузка стабильно выше 85% две недели подряд
+        rationale: Пиковые часы 20:00-22:00, средняя загрузка 0.87, отсутствует пиковая надбавка
+        suggestedAction: Добавить часовую надбавку или специальный тариф на 20:00-22:00
+        targetClubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        targetResourceId: null
+        impactValueMinor: '1200000'
+        impactDescription: До +12% выручки в часы пик при загрузке 0.87
+        generatedAt: '2026-08-04T11:00:00Z'
+      - id: 8d9e0f1a-2b3c-4d5e-8f6a-7b8c9d0e1f2a
+        type: PROMOTION_SUGGESTION
+        priority: MEDIUM
+        title: Промо на дневные часы
+        description: Загрузка с 10:00 до 14:00 в будни ниже 20%
+        rationale: Оффпик загрузка 0.18, свободные ресурсы 82%
+        suggestedAction: Создать промо на будни 10:00-14:00 в модуле Admin
+        targetClubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        targetResourceId: null
+        impactValueMinor: '600000'
+        impactDescription: Привлечение до +8% загрузки в оффпик
+        generatedAt: '2026-08-04T11:00:00Z'
+      - id: 9e0f1a2b-3c4d-4e5f-9a6b-8c9d0e1f2a3b
+        type: HOURS_OPTIMIZATION
+        priority: MEDIUM
+        title: Расширить часы работы в пятницу
+        description: В пятницу в 23:00 загрузка 0.62 при закрытии в 00:00
+        rationale: Пятница 23:00 загрузка 0.62, клуб закрывается в 00:00
+        suggestedAction: Рассмотреть продление работы в пятницу до 02:00
+        targetClubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+        targetResourceId: null
+        impactValueMinor: '450000'
+        impactDescription: До +9% выручки в пятницу
+        generatedAt: '2026-08-04T11:00:00Z'
+      - id: af1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+        type: RESOURCE_UTILIZATION
+        priority: LOW
+        title: Низкая загрузка PC 07
+        description: PC 07 в Основном зале имеет загрузку 0.21 против средней 0.47 по клубу
+        rationale: Загрузка ресурса 0.21 существенно ниже средней 0.47
+        suggestedAction: Переместить ресурс ближе к проходу или изменить его зону на карте
+        targetClubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        targetResourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa7
+        impactValueMinor: '300000'
+        impactDescription: Выравнивание загрузки до среднего уровня
+        generatedAt: '2026-08-04T11:00:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T11:00:00Z'

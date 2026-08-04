@@ -1,0 +1,59 @@
+type: object
+description: Показатели одного клуба в сетевой сводке организации.
+required:
+  - clubId
+  - clubName
+  - clubStatus
+  - revenueMinor
+  - bookings
+  - occupiedHours
+  - occupancyRate
+  - conversionRate
+  - activeResources
+properties:
+  clubId:
+    type: string
+    format: uuid
+    description: Идентификатор клуба.
+    example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+  clubName:
+    type: string
+    description: Название клуба.
+    example: Cyber Arena
+  clubStatus:
+    $ref: './ClubStatus.yaml'
+  revenueMinor:
+    type: string
+    description: Выручка клуба за период в minor units.
+    example: '42300000'
+  bookings:
+    type: integer
+    description: Количество завершённых бронирований за период.
+    example: 1390
+  occupiedHours:
+    type: number
+    format: double
+    description: Занятые ресурсо-часы за период.
+    example: 12500
+  occupancyRate:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Средняя загрузка (0..1).
+    example: 0.47
+  conversionRate:
+    type: number
+    format: double
+    minimum: 0
+    maximum: 1
+    description: Конверсия до check-in (0..1).
+    example: 0.47
+  activeResources:
+    type: integer
+    description: Среднее число активных ресурсов.
+    example: 24
+  topResourceName:
+    type: [string, 'null']
+    description: Самый популярный ресурс клуба за период.
+    example: PC 12
