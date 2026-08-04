@@ -1,0 +1,1382 @@
+# =====================================================================
+# Visora API — Paths модуля Reservations
+# =====================================================================
+
+'/reservations':
+  post:
+    tags:
+      - reservations
+    summary: Создать бронирование
+    operationId: createReservation
+    description: |-
+      Создаёт новое бронирование в клубе.
+
+      **Разрешения:** `reservation.create.self` (PLAYER) / `reservation.create.club` (CLUB_ADMIN, ORG_OWNER).
+
+      **Идемпотентность:** обязательный заголовок `Idempotency-Key`.
+
+      **Бизнес-правила:**
+      - Ресурсы: один VIP room либо от 1 до 10 компьютеров; смешивать типы запрещено.
+      - Длительность: от минимальной (конфигурируемой клубом) до 10 часов.
+      - Начало — не позднее чем через 24 часа от текущего момента (горизонт бронирования); бронь можно создать за 2–3 часа до начала.
+      - Интервал должен попадать в рабочие часы клуба и не пересекаться с закрытиями.
+      - Проекция состояния ресурса от Provider должна быть свежей (policy доступности клуба).
+      - Финальная защита от пересечений — PostgreSQL exclusion constraint.
+
+      **Валидация:** `clubId`, `resourceIds[*]` — UUID; `startAt`/`endAt` — ISO 8601; `endAt > startAt`; `participantCount >= 1`; `notes` ≤ 1000 символов.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.create.self
+      - reservation.create.club
+    x-business-rules:
+      - Максимум 10 часов.
+      - Начало — максимум через 24 часа от текущего момента (нельзя бронировать дальше суток вперёд).
+      - Один VIP room либо компьютеры (без смешивания).
+      - Запрет пересечений с активными бронями.
+    parameters:
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ReservationCreateRequest.yaml'
+          examples:
+            createReservation:
+              $ref: '../components/examples.yaml#/CreateReservationRequest'
+    responses:
+      '201':
+        description: Бронирование создано.
+        headers:
+          Location:
+            description: URL созданного бронирования.
+            schema:
+              type: string
+              format: uri-reference
+            example: /api/v1/reservations/2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+            examples:
+              createReservation:
+                $ref: '../components/examples.yaml#/CreateReservationResponse'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+  get:
+    tags:
+      - reservations
+    summary: Список бронирований
+    operationId: listReservations
+    description: |-
+      Возвращает список бронирований с фильтрацией, поиском и пагинацией.
+
+      **Доступ:** PLAYER видит только свои брони; CLUB_ADMIN/ORG_OWNER видят брони в scope клуба/организации.
+
+      **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+
+      **Фильтры:** `status`, `clubId`, `playerId` (только staff), `resourceId`, `resourceType`, `from`/`to`, `q` (поиск по номеру, имени/телефону игрока).
+      **Сортировка:** `sort=startAt:desc` (поля: `startAt`, `endAt`, `createdAt`, `totalMinor`).
+      **Пагинация:** `page`, `pageSize`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/StatusFilter'
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/PlayerId'
+      - $ref: '../components/parameters.yaml#/ResourceId'
+      - $ref: '../components/parameters.yaml#/ResourceTypeQuery'
+      - $ref: '../components/parameters.yaml#/From'
+      - $ref: '../components/parameters.yaml#/To'
+      - $ref: '../components/parameters.yaml#/Q'
+      - $ref: '../components/parameters.yaml#/Sort'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Список бронирований.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ReservationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/reservations/current':
+  get:
+    tags:
+      - reservations
+    summary: Текущее бронирование игрока
+    operationId: getCurrentReservation
+    description: |-
+      Возвращает текущее активное бронирование вызывающего игрока (статусы `CHECKED_IN` или `ACTIVE`).
+      Если активной брони нет — `data: null` (не является ошибкой).
+
+      **Разрешение:** `reservation.read.self`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Текущее бронирование (может быть null).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  anyOf:
+                    - $ref: '../schemas/ReservationDetails.yaml'
+                    - type: 'null'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+
+'/reservations/validate':
+  post:
+    tags:
+      - reservations
+    summary: Валидация бронирования
+    operationId: validateReservation
+    description: |-
+      Проверяет возможность создания брони без фактического создания.
+      Выполняет те же бизнес-проверки и проверку пересечений, возвращает конфликты и предупреждения.
+
+      **Разрешение:** `reservation.create.self`.
+
+      **Примечание:** предварительная проверка улучшает UX, но финальную защиту обеспечивает PostgreSQL exclusion constraint.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.create.self
+    x-business-rules:
+      - Не создаёт бронь, только проверяет.
+      - Проверяет пересечения, часы работы, длительность и горизонт брони.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ReservationCreateRequest.yaml'
+          examples:
+            createReservation:
+              $ref: '../components/examples.yaml#/CreateReservationRequest'
+    responses:
+      '200':
+        description: Результат валидации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationValidation.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/reservations/availability':
+  get:
+    tags:
+      - reservations
+    summary: Проверить доступность
+    operationId: checkReservationAvailability
+    description: |-
+      Возвращает доступность ресурсов клуба в интервале `from`–`to`.
+      Сливает: расписание и закрытия клуба, пересечения с активными бронями и (при `includeState=true`) проекцию состояния Provider с freshness.
+
+      **Разрешение:** `reservation.read.self`.
+
+      **Параметры:** `clubId` (обязателен), `from`, `to` (ISO 8601, интервал не более 24 часов), `resourceType`, `resourceId`, `zoneIds`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/From'
+      - $ref: '../components/parameters.yaml#/To'
+      - $ref: '../components/parameters.yaml#/ResourceTypeQuery'
+      - $ref: '../components/parameters.yaml#/ResourceId'
+      - $ref: '../components/parameters.yaml#/ZoneIds'
+      - $ref: '../components/parameters.yaml#/IncludeState'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Доступность ресурсов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationAvailability.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              availability:
+                $ref: '../components/examples.yaml#/AvailabilityCheckExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/reservations/{reservationId}':
+  get:
+    tags:
+      - reservations
+    summary: Детали бронирования
+    operationId: getReservation
+    description: |-
+      Полные детали бронирования: выделенные ресурсы, участники, история продлений и доступные действия.
+
+      **Разрешения:** `reservation.read.self` (только свои) / `reservation.read.club` (staff).
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Детали бронирования.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              details:
+                $ref: '../components/examples.yaml#/ReservationDetailsExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+  patch:
+    tags:
+      - admin-reservations
+    summary: Обновить бронирование
+    operationId: adminUpdateReservation
+    description: |-
+      Обновление бронирования администратором (заметки, число участников, перенос времени).
+
+      **Требуется `If-Match`** с текущей `version`; при расхождении — `409 VERSION_CONFLICT`.
+
+      **Правила:** перенос времени повторно проверяет пересечения и рабочие часы; при переносе времени обязателен `reason`.
+
+      **Разрешение:** `reservation.update.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.update.club
+    x-business-rules:
+      - Перенос времени повторно проверяет пересечения.
+      - Изменение времени аудируется.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/IfMatch'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ReservationUpdateRequest.yaml'
+    responses:
+      '200':
+        description: Обновлённое бронирование.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/reservations/{reservationId}/history':
+  get:
+    tags:
+      - reservations
+    summary: История бронирования
+    operationId: getReservationHistory
+    description: |-
+      Полная история смены статусов бронирования (immutable, append-only).
+
+      **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+    responses:
+      '200':
+        description: История смены статусов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationHistory.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              history:
+                $ref: '../components/examples.yaml#/ReservationHistoryExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/reservations/{reservationId}/timeline':
+  get:
+    tags:
+      - reservations
+    summary: Хронология бронирования
+    operationId: getReservationTimeline
+    description: |-
+      Хронология всех событий брони: статусы, продления, перемещения, обновления.
+      Отличается от истории тем, что включает события, не меняющие статус.
+
+      **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+    responses:
+      '200':
+        description: Хронология событий.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationTimeline.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/reservations/{reservationId}/status':
+  get:
+    tags:
+      - reservations
+    summary: Статус бронирования
+    operationId: getReservationStatus
+    description: |-
+      Текущий статус, версия и доступные действия. Лёгкий способ отслеживать изменение брони.
+
+      **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+    responses:
+      '200':
+        description: Текущий статус.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationStatusView.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/reservations/{reservationId}/participants':
+  get:
+    tags:
+      - reservations
+    summary: Участники бронирования
+    operationId: getReservationParticipants
+    description: |-
+      Список участников бронирования.
+
+      **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+    responses:
+      '200':
+        description: Участники брони.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: object
+                  required: [participants]
+                  properties:
+                    participants:
+                      type: array
+                      items:
+                        $ref: '../schemas/ReservationParticipant.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/reservations/{reservationId}/cancel':
+  post:
+    tags:
+      - reservations
+    summary: Отменить бронирование
+    operationId: cancelReservation
+    description: |-
+      Отмена бронирования.
+
+      **Правила:**
+      - Игрок может отменить до начала; отмена позже cutoff (обычно за 3 часа до старта) запрещена → `422 CANCELLATION_NOT_ALLOWED`.
+      - Администратор может отменить до завершения; `reason` обязателен.
+      - Отмена активной (`CHECKED_IN`/`ACTIVE`) брони → `409 RESERVATION_ALREADY_ACTIVE` (используйте `complete`).
+      - Слот(ы) освобождаются; депозит возвращается по политике клуба.
+
+      **Разрешения:** `reservation.cancel.self` / `reservation.cancel.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.cancel.self
+      - reservation.cancel.club
+    x-business-rules:
+      - Отмена игроком не позднее cutoff (по умолчанию за 3 часа).
+      - Освобождение слота после отмены.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKeyOptional'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ReservationCancelRequest.yaml'
+          examples:
+            cancel:
+              value:
+                reason: Передумал
+                notifyPlayer: true
+    responses:
+      '200':
+        description: Отменённое бронирование.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+            examples:
+              cancelled:
+                $ref: '../components/examples.yaml#/CancellationExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/reservations/{reservationId}/extensions':
+  post:
+    tags:
+      - reservations
+    summary: Запросить продление брони
+    operationId: requestReservationExtension
+    description: |-
+      Создаёт запрос на продление брони. Запрос не меняет бронь до утверждения администратором.
+
+      **Правила:**
+      - `requestedEndAt` строго позже текущего `endAt`.
+      - Суммарная длительность не более 10 часов.
+      - Бронь должна быть в статусе `CHECKED_IN` или `ACTIVE` → иначе `422 EXTENSION_NOT_ALLOWED`.
+      - На новый интервал не должно быть пересечений → `409 RESERVATION_SLOT_CONFLICT`.
+
+      **Разрешение:** `reservation.extend.self`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.extend.self
+    x-business-rules:
+      - Продление утверждает администратор.
+      - Запрос не меняет бронь до решения.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ReservationExtensionRequestCreate.yaml'
+          examples:
+            extend:
+              value:
+                requestedEndAt: '2026-08-04T19:00:00Z'
+                reason: Хочу поиграть ещё
+    responses:
+      '201':
+        description: Запрос на продление создан.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationExtensionRequest.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              extensionRequest:
+                $ref: '../components/examples.yaml#/ExtensionRequestExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/me/reservations':
+  get:
+    tags:
+      - reservations
+    summary: Мои бронирования
+    operationId: getMyReservations
+    description: |-
+      Список бронирований текущего игрока (все статусы) с фильтрами и пагинацией.
+
+      **Разрешение:** `reservation.read.self`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+    parameters:
+      - $ref: '../components/parameters.yaml#/StatusFilter'
+      - $ref: '../components/parameters.yaml#/From'
+      - $ref: '../components/parameters.yaml#/To'
+      - $ref: '../components/parameters.yaml#/Q'
+      - $ref: '../components/parameters.yaml#/Sort'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Список бронирований игрока.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ReservationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/me/reservations/upcoming':
+  get:
+    tags:
+      - reservations
+    summary: Предстоящие бронирования
+    operationId: getMyUpcomingReservations
+    description: |-
+      Предстоящие бронирования игрока: статусы `PENDING` и `CONFIRMED`, `startAt` в будущем.
+
+      **Разрешение:** `reservation.read.self`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+    parameters:
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Предстоящие бронирования.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ReservationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/me/reservations/active':
+  get:
+    tags:
+      - reservations
+    summary: Активные бронирования
+    operationId: getMyActiveReservations
+    description: |-
+      Активные бронирования игрока: статусы `CHECKED_IN` и `ACTIVE`.
+
+      **Разрешение:** `reservation.read.self`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+    parameters:
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Активные бронирования.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ReservationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/me/reservations/expired':
+  get:
+    tags:
+      - reservations
+    summary: Завершённые/истёкшие бронирования
+    operationId: getMyExpiredReservations
+    description: |-
+      Завершённые и истёкшие бронирования игрока: статусы `COMPLETED`, `EXPIRED`, `NO_SHOW`, `CANCELLED`, `REJECTED`.
+
+      **Разрешение:** `reservation.read.self`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.self
+    parameters:
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Завершённые/истёкшие бронирования.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ReservationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/queue':
+  get:
+    tags:
+      - admin-reservations
+    summary: Очередь бронирований
+    operationId: getAdminReservationQueue
+    description: |-
+      Очередь броней для персонала клуба на указанную дату (по умолчанию — сегодня, локальная дата клуба).
+      Сортировка по `startAt`; активные статусы (`CONFIRMED`, `CHECKED_IN`, `ACTIVE`) приоритетны.
+      `q` — поиск по номеру брони, имени или телефону игрока.
+
+      **Разрешение:** `reservation.read.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.read.club
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubIdQuery'
+      - $ref: '../components/parameters.yaml#/AdminDate'
+      - $ref: '../components/parameters.yaml#/StatusFilter'
+      - $ref: '../components/parameters.yaml#/Q'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Очередь бронирований.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ReservationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/{reservationId}/check-in':
+  post:
+    tags:
+      - admin-reservations
+    summary: Подтвердить приход
+    operationId: adminConfirmArrival
+    description: |-
+      Подтверждение прибытия игрока: `CONFIRMED → CHECKED_IN`.
+      Устанавливает `checkedInAt`, `checkedInByUserId`.
+      Опционально запускает старт игровой сессии через Provider Interface **асинхронно, вне транзакции**.
+
+      **Ошибки:** `409 PLAYER_ALREADY_CHECKED_IN`, `409 RESERVATION_ALREADY_ACTIVE`, `422 INVALID_STATE_TRANSITION`.
+
+      **Разрешение:** `reservation.check_in.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.check_in.club
+    x-business-rules:
+      - Только из статуса CONFIRMED.
+      - Provider-команда старта сессии выполняется после коммита.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Бронирование после подтверждения прихода.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/{reservationId}/reject':
+  post:
+    tags:
+      - admin-reservations
+    summary: Отклонить бронирование
+    operationId: adminRejectReservation
+    description: |-
+      Отклонение бронирования: `PENDING → REJECTED`. `reason` обязателен.
+      Слот освобождается.
+
+      **Разрешение:** `reservation.reject.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.reject.club
+    x-business-rules:
+      - Только из статуса PENDING.
+      - Отклонение аудируется.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 500
+                description: Причина отклонения.
+              notifyPlayer:
+                type: boolean
+                default: true
+                description: Уведомить игрока.
+          examples:
+            reject:
+              value:
+                reason: Нет свободных мест по техническим причинам
+                notifyPlayer: true
+    responses:
+      '200':
+        description: Отклонённое бронирование.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/{reservationId}/complete':
+  post:
+    tags:
+      - admin-reservations
+    summary: Завершить бронирование
+    operationId: adminCompleteReservation
+    description: |-
+      Штатное завершение брони: `CHECKED_IN`/`ACTIVE → COMPLETED`.
+      Устанавливает `completedAt`. Ресурсы освобождаются.
+      Опционально отправляет команду завершения сессии в Provider.
+
+      **Разрешение:** `reservation.complete.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.complete.club
+    x-business-rules:
+      - Только из статусов CHECKED_IN или ACTIVE.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+                maxLength: 500
+                description: Причина (для аудита).
+    responses:
+      '200':
+        description: Завершённое бронирование.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/{reservationId}/expire':
+  post:
+    tags:
+      - admin-reservations
+    summary: Истечь бронирование
+    operationId: adminExpireReservation
+    description: |-
+      Ручной перевод брони в `EXPIRED` (например, hold не подтверждён).
+      Обычно переход в `EXPIRED`/`NO_SHOW` выполняет scheduled-воркер автоматически;
+      этот endpoint — для исключительных случаев. `reason` рекомендуется.
+
+      **Разрешение:** `reservation.expire.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.expire.club
+    x-business-rules:
+      - Только из статусов PENDING или CONFIRMED.
+      - Слот освобождается.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+                maxLength: 500
+                description: Причина (для аудита).
+    responses:
+      '200':
+        description: Истёкшее бронирование.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/{reservationId}/move':
+  post:
+    tags:
+      - admin-reservations
+    summary: Переместить бронирование
+    operationId: adminMoveReservation
+    description: |-
+      Перемещение игрока на другой ресурс клуба.
+      Создаётся новое выделение (`movedFromAllocationId` указывает на исходное), старое освобождается.
+      Перемещение повторно проверяет пересечения на целевом ресурсе.
+
+      **Ошибки:** `409 RESERVATION_SLOT_CONFLICT` (целевой ресурс занят), `422 INVALID_STATE_TRANSITION`.
+
+      **Разрешение:** `reservation.move.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.move.club
+    x-business-rules:
+      - Целевой ресурс в том же клубе.
+      - Только для статусов CONFIRMED/CHECKED_IN/ACTIVE.
+      - Перемещение аудируется.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [targetResourceId]
+            properties:
+              targetResourceId:
+                type: string
+                format: uuid
+                description: Ресурс, на который перемещается игрок.
+              reason:
+                type: string
+                maxLength: 500
+                description: Причина перемещения.
+          examples:
+            move:
+              value:
+                targetResourceId: 6e5f4a3b-2c1d-4e0f-8a9b-0c1d2e3f4a5b
+                reason: Техническая проблема с компьютером
+    responses:
+      '200':
+        description: Бронирование после перемещения.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/reservations/{reservationId}/status':
+  post:
+    tags:
+      - admin-reservations
+    summary: Изменить статус бронирования
+    operationId: adminChangeReservationStatus
+    description: |-
+      Ручная смена статуса бронирования (исправление/миграция данных).
+      Только допустимые переходы; все переходы аудируются. Требуется `If-Match`.
+
+      **Ошибки:** `422 INVALID_STATE_TRANSITION`, `409 VERSION_CONFLICT`.
+
+      **Разрешение:** `reservation.status.club` (привилегированное).
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.status.club
+    x-business-rules:
+      - Только допустимые переходы state machine.
+      - Изменение статуса аудируется.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ReservationId'
+      - $ref: '../components/parameters.yaml#/IfMatch'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, reason]
+            properties:
+              status:
+                $ref: '../schemas/ReservationStatus.yaml'
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 500
+                description: Причина смены статуса (обязательна для аудита).
+    responses:
+      '200':
+        description: Бронирование после смены статуса.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/extensions/{extensionId}/approve':
+  post:
+    tags:
+      - admin-reservations
+    summary: Утвердить продление
+    operationId: adminApproveExtension
+    description: |-
+      Утверждение запроса на продление: `PENDING → APPROVED`.
+      Продлевает `endAt` брони с перепроверкой пересечений; доп. сумма фиксируется как цена-снимок.
+      Отправляет команду продления сессии в Provider (асинхронно).
+
+      **Ошибки:** `422 EXTENSION_NOT_ALLOWED` (бронь в недопустимом статусе или перевышен лимит), `409 RESERVATION_SLOT_CONFLICT`.
+
+      **Разрешение:** `reservation.extension.approve.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.extension.approve.club
+    x-business-rules:
+      - Только для запроса в статусе PENDING.
+      - Суммарная длительность не более 10 часов.
+      - Перепроверка пересечений на новый интервал.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ExtensionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              additionalAmountMinor:
+                type: string
+                pattern: '^-?\d+$'
+                description: Дополнительная сумма за продление (minor units, строка).
+              currency:
+                type: string
+                minLength: 3
+                maxLength: 3
+                pattern: '^[A-Z]{3}$'
+                description: ISO 4217 (должна совпадать с валютой брони).
+              note:
+                type: string
+                maxLength: 500
+                description: Комментарий к утверждению.
+    responses:
+      '200':
+        description: Бронирование после продления.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationDetails.yaml'
+                meta:
+                  $ref: '../schemas/ReservationMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/admin/extensions/{extensionId}/reject':
+  post:
+    tags:
+      - admin-reservations
+    summary: Отклонить продление
+    operationId: adminRejectExtension
+    description: |-
+      Отклонение запроса на продление: `PENDING → REJECTED`. `reason` обязателен.
+      Бронь не меняется.
+
+      **Разрешение:** `reservation.extension.approve.club`.
+    security:
+      - bearerAuth: []
+    x-permissions:
+      - reservation.extension.approve.club
+    x-business-rules:
+      - Только для запроса в статусе PENDING.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ExtensionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 500
+                description: Причина отклонения.
+    responses:
+      '200':
+        description: Отклонённый запрос на продление.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ReservationExtensionRequest.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'

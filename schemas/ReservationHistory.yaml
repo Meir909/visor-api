@@ -1,0 +1,14 @@
+type: object
+description: Полная история смены статусов бронирования (immutable, append-only).
+required:
+  - reservationId
+  - items
+properties:
+  reservationId:
+    type: string
+    format: uuid
+  items:
+    type: array
+    description: Записи переходов статусов в хронологическом порядке.
+    items:
+      $ref: './ReservationStatusHistoryEntry.yaml'

@@ -1,0 +1,48 @@
+type: object
+description: Публичный профиль пользователя Visora (игрок и/или сотрудник). Глобальная identity; tenant-роли хранятся в memberships.
+required:
+  - id
+  - status
+  - locale
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор пользователя.
+  phoneE164:
+    type: [string, 'null']
+    maxLength: 20
+    pattern: '^\+[1-9]\d{1,14}$'
+    description: Нормализованный номер телефона (E.164). Возвращается только владельцу профиля; в логах маскируется.
+  displayName:
+    type: [string, 'null']
+    maxLength: 120
+    description: Отображаемое имя.
+  emailNormalized:
+    type: [string, 'null']
+    maxLength: 320
+    format: email
+    description: Нормализованный email (будущая контактная/identity-проверка).
+  locale:
+    type: string
+    maxLength: 16
+    description: Предпочитаемая локаль, например `ru-KZ`.
+    example: ru-KZ
+  status:
+    $ref: './UserStatus.yaml'
+  phoneVerifiedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время подтверждения телефона (первый успешный OTP).
+  lastLoginAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время последнего успешного входа.
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

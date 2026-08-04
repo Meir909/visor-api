@@ -1,0 +1,62 @@
+type: object
+description: Запрос на продление брони. Не мутирует бронь до утверждения администратором.
+required:
+  - id
+  - reservationId
+  - requestedEndAt
+  - status
+  - expiresAt
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор запроса на продление.
+  reservationId:
+    type: string
+    format: uuid
+    description: Бронирование, для которого запрошено продление.
+  clubId:
+    type: string
+    format: uuid
+    description: Клуб.
+  requestedEndAt:
+    type: string
+    format: date-time
+    description: Желаемое новое окончание брони.
+  status:
+    $ref: './ExtensionRequestStatus.yaml'
+  requestedByUserId:
+    type: string
+    format: uuid
+    description: Инициатор запроса.
+  reviewedByUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Администратор, принявший решение.
+  reviewedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время решения.
+  reviewReason:
+    type: [string, 'null']
+    maxLength: 500
+    description: Комментарий к решению.
+  additionalAmountMinor:
+    type: [string, 'null']
+    pattern: '^-?\d+$'
+    description: Дополнительная сумма при утверждении (minor units, строка).
+  currency:
+    type: [string, 'null']
+    description: ISO 4217.
+  expiresAt:
+    type: string
+    format: date-time
+    description: Дедлайн решения; после него запрос автоматически переходит в EXPIRED.
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

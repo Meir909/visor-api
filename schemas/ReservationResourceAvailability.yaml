@@ -1,0 +1,61 @@
+type: object
+description: Доступность одного ресурса в запрошенном интервале.
+required:
+  - resourceId
+  - resourceType
+  - code
+  - displayName
+  - availability
+properties:
+  resourceId:
+    type: string
+    format: uuid
+    description: Идентификатор ресурса.
+  resourceType:
+    $ref: './ResourceType.yaml'
+  code:
+    type: string
+    description: Код ресурса в клубе.
+    example: PC-12
+  displayName:
+    type: string
+    description: Отображаемое имя.
+  zoneId:
+    type: [string, 'null']
+    format: uuid
+    description: Зона.
+  zoneName:
+    type: [string, 'null']
+    description: Название зоны.
+  state:
+    $ref: './ProviderResourceState.yaml'
+    description: Последняя проекция состояния от Provider (может быть устаревшей).
+  stateObservedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время наблюдения состояния (freshness).
+  availability:
+    type: array
+    description: Слоты доступности в пределах интервала.
+    items:
+      type: object
+      required:
+        - startAt
+        - endAt
+        - status
+      properties:
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        status:
+          $ref: './AvailabilityStatus.yaml'
+        reason:
+          type: [string, 'null']
+          description: Причина недоступности (бронь, сессия, maintenance, закрытие клуба).
+        conflictingReservationId:
+          type: [string, 'null']
+          format: uuid
+          description: Пересекающаяся бронь, если причина — бронь.

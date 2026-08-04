@@ -1,0 +1,68 @@
+type: object
+description: Выделенный ресурс (allocation) в брони — компьютер или VIP-комната.
+required:
+  - allocationId
+  - resourceId
+  - resourceType
+  - code
+  - displayName
+  - status
+  - startsAt
+  - endsAt
+properties:
+  allocationId:
+    type: string
+    format: uuid
+    description: Идентификатор выделения.
+  resourceId:
+    type: string
+    format: uuid
+    description: Идентификатор резервируемого ресурса.
+  resourceType:
+    $ref: './ResourceType.yaml'
+  code:
+    type: string
+    description: Стабильный код ресурса в клубе.
+    example: PC-12
+  displayName:
+    type: string
+    description: Отображаемое имя ресурса.
+  zoneId:
+    type: [string, 'null']
+    format: uuid
+    description: Зона ресурса.
+  zoneName:
+    type: [string, 'null']
+    description: Название зоны.
+  status:
+    $ref: './AllocationStatus.yaml'
+  startsAt:
+    type: string
+    format: date-time
+    description: Начало выделения.
+  endsAt:
+    type: string
+    format: date-time
+    description: Конец выделения.
+  releasedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время освобождения ресурса.
+  releaseReason:
+    type: [string, 'null']
+    maxLength: 120
+    description: Причина освобождения (cancellation, move, completion, repair).
+  movedFromAllocationId:
+    type: [string, 'null']
+    format: uuid
+    description: Ссылка на исходное выделение при перемещении.
+  computer:
+    allOf:
+      - $ref: './ReservationComputer.yaml'
+      - type: object
+        description: Заполняется при resourceType = COMPUTER.
+  vipRoom:
+    allOf:
+      - $ref: './ReservationVIPRoom.yaml'
+      - type: object
+        description: Заполняется при resourceType = VIP_ROOM.

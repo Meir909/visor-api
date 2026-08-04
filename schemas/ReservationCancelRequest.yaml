@@ -1,0 +1,19 @@
+type: object
+description: |
+  Запрос на отмену бронирования.
+
+  Правила:
+  - Игрок отменяет до начала; отмена позже cutoff (обычно за 3 часа до старта) запрещена → `422 CANCELLATION_NOT_ALLOWED`.
+  - Администратор отменяет в любой момент до завершения; `reason` обязателен.
+required:
+  - reason
+properties:
+  reason:
+    type: string
+    minLength: 1
+    maxLength: 500
+    description: Причина отмены.
+  notifyPlayer:
+    type: boolean
+    default: true
+    description: Уведомить игрока об отмене.

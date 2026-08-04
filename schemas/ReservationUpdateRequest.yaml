@@ -1,0 +1,29 @@
+type: object
+description: |
+  Запрос на обновление бронирования администратором. Требует заголовок `If-Match` с текущей версией.
+
+  Правила:
+  - Перенос времени повторно проверяет пересечения и рабочие часы клуба.
+  - `participantCount` не может превышать суммарную вместимость ресурсов.
+  - При изменении времени обязателен `reason` (аудит).
+properties:
+  notes:
+    type: [string, 'null']
+    maxLength: 1000
+    description: Заметки.
+  participantCount:
+    type: [integer, 'null']
+    minimum: 1
+    description: Новое число участников.
+  startAt:
+    type: [string, 'null']
+    format: date-time
+    description: Перенос начала брони.
+  endAt:
+    type: [string, 'null']
+    format: date-time
+    description: Перенос окончания брони.
+  reason:
+    type: [string, 'null']
+    maxLength: 500
+    description: Причина изменения (обязательна для переноса времени).

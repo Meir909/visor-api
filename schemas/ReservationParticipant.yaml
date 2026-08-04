@@ -1,0 +1,44 @@
+type: object
+description: Участник бронирования (зарегистрированный игрок или гость).
+required:
+  - id
+  - participantStatus
+  - isPrimary
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор участника.
+  reservationId:
+    type: string
+    format: uuid
+    description: Бронирование.
+  userId:
+    type: [string, 'null']
+    format: uuid
+    description: Зарегистрированный пользователь, если известен.
+  guestName:
+    type: [string, 'null']
+    maxLength: 120
+    description: Имя гостя, если пользователь не зарегистрирован.
+  guestPhoneE164:
+    type: [string, 'null']
+    maxLength: 20
+    pattern: '^\+[1-9]\d{1,14}$'
+    description: Телефон гостя в формате E.164 (защищённые PII).
+  participantStatus:
+    $ref: './ParticipantStatus.yaml'
+  isPrimary:
+    type: boolean
+    description: Основной участник (владелец брони). Ровно один на бронь.
+  checkedInAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время подтверждения прихода участника.
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

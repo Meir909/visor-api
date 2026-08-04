@@ -1,0 +1,612 @@
+openapi: 3.1.0
+info:
+  title: Visora API
+  summary: API платформы онлайн-бронирования Visora
+  version: 1.0.0
+  description: |
+    # Visora API
+
+    **Visora** — SaaS-платформа управления онлайн-бронированием и клиентским опытом развлекательных площадок (компьютерные клубы, VR-центры, консольные клубы, киберспортивные арены).
+
+    Visora **не заменяет** GizmoShell и другие внешние системы управления игровыми сессиями:
+
+    - Visora владеет бронированиями, профилями, клубами, расписанием и ценами.
+    - Provider (Gizmo) владеет фактическими игровыми сессиями и состоянием компьютеров.
+    - Frontend **никогда** не обращается к Provider напрямую; всё проходит через Visora API и Provider Interface.
+    - Reservation Service **не знает** о Gizmo; взаимодействие только через Provider Interface.
+
+    ## Версия документа
+
+    В версии `1.0.0` описаны **модули Reservations** (ядро платформы) и **Auth** (аутентификация и сессии). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+
+    ## Конвенции
+
+    ### Базовый URL и версионирование
+    - Все пути начинаются с `/api/v1`.
+    - Версия в URL относится к presentation-контракту.
+    - Breaking changes допускаются только в новой major версии.
+
+    ### Формат ответов
+    Успешный ответ с одним ресурсом:
+
+    ```json
+    {
+      "data": {},
+      "meta": {
+        "requestId": "2cd0f5a8-4b1c-4f8a-9b1c-8d7e6f5a4b3c",
+        "timestamp": "2026-08-04T10:12:30Z"
+      }
+    }
+    ```
+
+    Список:
+
+    ```json
+    {
+      "data": [],
+      "meta": {
+        "page": 1,
+        "pageSize": 20,
+        "total": 120,
+        "hasNextPage": true
+      }
+    }
+    ```
+
+    Ошибка (RFC 9457 Problem Details):
+
+    ```json
+    {
+      "type": "https://docs.visora.kz/problems/reservation-slot-conflict",
+      "title": "Бронирование конфликтует с существующим",
+      "status": 409,
+      "detail": "Выбранный компьютер уже занят в указанный интервал",
+      "instance": "/api/v1/reservations",
+      "code": "RESERVATION_SLOT_CONFLICT",
+      "correlationId": "4b1c9d8e-..."
+    }
+    ```
+
+    Frontend принимает решения по полю `code`, а не парсит `detail`.
+
+    ### Идентификаторы, время и деньги
+    - Все идентификаторы — `UUID` (рекомендуется UUIDv7).
+    - Все временные метки — ISO 8601 / RFC 3339 в UTC (`date-time`).
+    - Деньги передаются **целыми числами в минимальных единицах валюты** (minor units) **строкой**, чтобы не терять точность в JavaScript: `"amountMinor": "300000"`.
+    - Валюта — код ISO 4217 (`KZT`).
+
+    ### Пагинация
+    - `page`, `pageSize` (по умолчанию `1` и `20`, максимум `100`), `total`.
+    - Для больших history-лент допускается курсорная пагинация (`nextCursor`, `hasNextPage`).
+
+    ### Идемпотентность
+    - Создание брони принимает обязательный заголовок `Idempotency-Key` (UUID).
+    - Одинаковый ключ + одинаковый payload → возвращается сохранённый результат.
+    - Одинаковый ключ + другой payload → `409 IDEMPOTENCY_KEY_REUSED`.
+
+    ### Оптимистичная блокировка
+    - Агрегат брони содержит `version`.
+    - Административные изменения передают `If-Match` с текущей версией; при расхождении — `409 VERSION_CONFLICT`.
+
+    ### Аутентификация
+    - Access token: заголовок `Authorization: Bearer <JWT>` (короткоживущий, 10–15 минут).
+    - Refresh token: HttpOnly Secure cookie; обновление — `POST /api/v1/auth/refresh` (модуль Auth).
+    - Организация и scope определяются сервером из авторизованного контекста, а не из тела запроса.
+
+    ### Коды состояния
+    | HTTP | Применение |
+    |---|---|
+    | 200 | Успешный query/command |
+    | 201 | Ресурс создан |
+    | 204 | Успех без тела |
+    | 400 | Некорректный запрос |
+    | 401 | Требуется аутентификация |
+    | 403 | Аутентифицирован, но доступ запрещён |
+    | 404 | Ресурс не найден или скрыт scope'ом |
+    | 409 | Конфликт состояния / конкуренция |
+    | 422 | Синтаксис корректен, нарушено бизнес-правило |
+    | 429 | Превышен rate limit |
+    | 503 | Временная недоступность зависимости |
+
+    ### WebSocket
+    REST остаётся authoritative API. WebSocket доставляет уведомления об изменениях. Справочник каналов и событий модуля Reservations: `paths/websocket.yaml`.
+
+  contact:
+    name: Visora Platform
+    url: https://visora.kz
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: /api/v1
+    description: Базовый путь API v1
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: reservations
+    description: |-
+      # Бронирования (Player)
+
+      Endpoints игрока: создание, список, детали, история, таймлайн, статус, участники, отмена, продление, проверка доступности и валидация.
+
+      ## Бизнес-правила
+
+      - Бронь может содержать **один компьютер**, **несколько компьютеров** или **одну VIP-комнату**. Смешивать VIP-комнату и компьютеры в одной брони запрещено.
+      - Минимальная длительность конфигурируема клубом; максимальная — **10 часов**.
+      - Бронь создаётся не позднее чем за **24 часа** до начала: горизонт бронирования — максимум сутки вперёд, бронировать за 2–3 часа до прихода можно.
+      - Если игрок не прибыл в течение **10 минут** после начала, бронь переходит в `NO_SHOW`, интервал освобождается.
+      - Бронь может быть продлена позже; **продление утверждает администратор**.
+      - Игрок может отменить бронь **до начала** (cutoff обычно за 3 часа до старта, конфигурируемо клубом).
+      - Брони не могут пересекаться; финальную защиту от пересечений обеспечивает PostgreSQL exclusion constraint.
+
+      ## Диаграмма переходов состояний
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> DRAFT
+          DRAFT --> PENDING: submit
+          DRAFT --> CANCELLED: user cancel
+          PENDING --> CONFIRMED: payment/deposit accepted
+          PENDING --> REJECTED: admin reject
+          PENDING --> EXPIRED: hold timeout
+          PENDING --> CANCELLED: user cancel
+          CONFIRMED --> CHECKED_IN: admin confirm arrival
+          CONFIRMED --> NO_SHOW: no arrival (grace 10 min)
+          CONFIRMED --> CANCELLED: allowed cancellation
+          CONFIRMED --> EXPIRED: admin expire
+          CHECKED_IN --> ACTIVE: session started
+          ACTIVE --> COMPLETED: end reached
+          CHECKED_IN --> COMPLETED: admin complete early
+          COMPLETED --> [*]
+          CANCELLED --> [*]
+          REJECTED --> [*]
+          EXPIRED --> [*]
+          NO_SHOW --> [*]
+      ```
+
+      ## Последовательность создания брони
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant P as Player (Next.js)
+          participant API as Visora API
+          participant SVC as Reservation Service
+          participant C as Computers
+          participant PROV as Provider Interface
+          participant DB as PostgreSQL
+          participant WS as WebSocket
+
+          P->>API: POST /api/v1/reservations (Idempotency-Key)
+          API->>SVC: CreateReservationCommand
+          SVC->>C: resolve resources
+          C->>PROV: get resource states
+          PROV-->>C: canonical states
+          SVC->>SVC: validate business rules
+          SVC->>DB: BEGIN → check overlap → INSERT + outbox → COMMIT
+          SVC-->>API: ReservationDetails
+          API-->>P: 201 Created
+          API-->>WS: reservation.created.v1 → user.{id}, club.admin.{clubId}
+      ```
+
+      ## Жизненный цикл брони
+
+      ```mermaid
+      flowchart LR
+          A[DRAFT] --> B[PENDING]
+          B --> C[CONFIRMED]
+          C --> D[CHECKED_IN]
+          D --> E[ACTIVE]
+          E --> F[COMPLETED]
+          B --> G[REJECTED]
+          B --> H[EXPIRED]
+          C --> I[NO_SHOW]
+          C --> J[CANCELLED]
+      ```
+
+      ## WebSocket-события модуля
+
+      Каналы `user.{userId}` и `club.admin.{clubId}`:
+
+      | Событие | Смысл |
+      |---|---|
+      | `reservation.created.v1` | Создано |
+      | `reservation.confirmed.v1` | Подтверждено |
+      | `reservation.checked_in.v1` | Отмечен приход |
+      | `reservation.completed.v1` | Завершено |
+      | `reservation.cancelled.v1` | Отменено |
+      | `reservation.expired.v1` | Истекло |
+      | `reservation.no_show.v1` | Неявка |
+      | `reservation.moved.v1` | Перемещено |
+      | `reservation.extended.v1` | Продлено |
+      | `reservation.updated.v1` | Обновлено |
+      | `extension.requested.v1` | Запрошено продление |
+      | `extension.approved.v1` | Продление утверждено |
+      | `extension.rejected.v1` | Продление отклонено |
+
+      ## Роли и разрешения
+
+      - **PLAYER** — только свои брони: `reservation.read.self`, `reservation.create.self`, `reservation.cancel.self`, `reservation.extend.self`.
+      - **CLUB_ADMIN** — операции клуба: `reservation.read.club`, `reservation.check_in.club`, `reservation.move.club`, `reservation.extension.approve.club`.
+      - **ORG_OWNER** — все клубы организации, включая бронирования и очередь.
+
+  - name: admin-reservations
+    description: |-
+      # Бронирования (Admin)
+
+      Endpoints для персонала клуба и владельцев: очередь броней, подтверждение прихода, отклонение, завершение, истечение, перемещение, ручная смена статуса и утверждение продлений.
+
+      - Разрешения определяются membership-ролью и scope клуба.
+      - Каждый запрос проверяет принадлежность клуба и ресурса организации.
+      - Все административные действия аудируются.
+      - Мутации принимают `If-Match` с текущей `version` брони.
+
+      ## Последовательность подтверждения прихода
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant A as Admin (Next.js)
+          participant API as Visora API
+          participant SVC as Reservation Service
+          participant DB as PostgreSQL
+          participant PROV as Provider Interface
+
+          A->>API: POST /api/v1/admin/reservations/{id}/check-in
+          API->>SVC: ConfirmArrivalCommand
+          SVC->>DB: lock reservation row
+          SVC->>SVC: CONFIRMED → CHECKED_IN
+          SVC->>DB: save + outbox
+          SVC->>PROV: startSession (async, вне транзакции)
+          SVC-->>API: ReservationDetails
+          API-->>A: 200 OK
+      ```
+
+  - name: auth
+    description: |-
+      # Аутентификация
+
+      Идентификация пользователя по номеру телефона (E.164) через одноразовый OTP-код. Успешная проверка создаёт server-side session и пару токенов.
+
+      **Модель identity:**
+      - `accessToken` — короткоживущий JWT (10–15 минут), claim-ы: `sub`, `sid`, `iat`, `exp`, `iss`, `aud`.
+      - `refreshToken` — случайный opaque токен; на сервере хранится только hash; срок 30 дней; **rotation** при каждом refresh.
+      - `session` — запись с user ID, device metadata и состоянием отзыва.
+
+      **Доставка refresh token:**
+      - Web: HttpOnly, Secure, SameSite=Lax cookie на `Path=/api/v1/auth`.
+      - Mobile: в теле ответа, хранение в OS secure storage.
+
+      **OTP-безопасность:**
+      - Код действует 5 минут; challenge одноразовый.
+      - Максимум 5 попыток на challenge; resend — не чаще 60 секунд.
+      - Лимиты на телефон, IP и device fingerprint.
+      - OTP хранится как HMAC/hash, не plaintext.
+      - Ответ не раскрывает, существует ли пользователь.
+      - Статический код разрешён только в non-production и явно маркируется.
+
+      **Rotation и replay:**
+      - Каждый refresh атомарно помечает старый токен использованным и выдаёт новый.
+      - Повторное использование старого токена → вся token family отзывается и создаётся security event.
+      - `BLOCKED`/`DEACTIVATED` пользователи не получают новых токенов.
+
+      ## Последовательность входа по OTP
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant C as Client
+          participant A as Auth API
+          participant RL as Rate Limiter
+          participant OTP as OTP Store
+          participant SMS as SMS Adapter
+          participant U as Users
+
+          C->>A: POST /api/v1/auth/otp/request {phone}
+          A->>RL: check phone + IP + device limits
+          RL-->>A: allowed
+          A->>OTP: create challenge + hashed code + expiry
+          A->>SMS: send code
+          A-->>C: challengeId + retryAfter
+          C->>A: POST /api/v1/auth/otp/verify
+          A->>OTP: atomic verify and consume
+          OTP-->>A: verified
+          A->>U: findOrCreateUser(phone)
+          U-->>A: user
+          A-->>C: access token + refresh session
+      ```
+
+      ## Ротация refresh token
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant C as Client
+          participant A as Auth API
+          participant DB as refresh_tokens
+
+          C->>A: POST /api/v1/auth/refresh
+          A->>DB: find token_hash + family
+          alt replay (токен уже использован)
+              A->>DB: revoke всю family
+              A-->>C: 409 REFRESH_TOKEN_REPLAY
+          else valid
+              A->>DB: atomically mark used + issue new
+              A-->>C: new access + refresh (Set-Cookie)
+          end
+      ```
+
+      ## Публичные и защищённые endpoints
+
+      | Endpoint | Доступ |
+      |---|---|
+      | `POST /auth/otp/request`, `POST /auth/otp/verify`, `POST /auth/refresh` | Публичные (`security: []`) |
+      | `POST /auth/logout` | По refresh token (cookie или тело) |
+      | `POST /auth/logout-all`, `GET /auth/sessions`, `POST /auth/sessions/{id}/revoke`, `GET /auth/me` | `bearerAuth` |
+
+      ## Роли и разрешения
+
+      - **ANY_AUTHENTICATED** — `auth.session.read.self`, `auth.session.revoke.self`, `auth.logout.self`.
+      - **PLAYER** — `profile.read.self`.
+
+paths:
+  '/reservations':
+    $ref: './paths/reservations.yaml#/~1reservations'
+  '/reservations/current':
+    $ref: './paths/reservations.yaml#/~1reservations~1current'
+  '/reservations/validate':
+    $ref: './paths/reservations.yaml#/~1reservations~1validate'
+  '/reservations/availability':
+    $ref: './paths/reservations.yaml#/~1reservations~1availability'
+  '/reservations/{reservationId}':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}'
+  '/reservations/{reservationId}/history':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}~1history'
+  '/reservations/{reservationId}/timeline':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}~1timeline'
+  '/reservations/{reservationId}/status':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}~1status'
+  '/reservations/{reservationId}/participants':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}~1participants'
+  '/reservations/{reservationId}/cancel':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}~1cancel'
+  '/reservations/{reservationId}/extensions':
+    $ref: './paths/reservations.yaml#/~1reservations~1{reservationId}~1extensions'
+  '/me/reservations':
+    $ref: './paths/reservations.yaml#/~1me~1reservations'
+  '/me/reservations/upcoming':
+    $ref: './paths/reservations.yaml#/~1me~1reservations~1upcoming'
+  '/me/reservations/active':
+    $ref: './paths/reservations.yaml#/~1me~1reservations~1active'
+  '/me/reservations/expired':
+    $ref: './paths/reservations.yaml#/~1me~1reservations~1expired'
+  '/admin/reservations/queue':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1queue'
+  '/admin/reservations/{reservationId}/check-in':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1{reservationId}~1check-in'
+  '/admin/reservations/{reservationId}/reject':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1{reservationId}~1reject'
+  '/admin/reservations/{reservationId}/complete':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1{reservationId}~1complete'
+  '/admin/reservations/{reservationId}/expire':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1{reservationId}~1expire'
+  '/admin/reservations/{reservationId}/move':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1{reservationId}~1move'
+  '/admin/reservations/{reservationId}/status':
+    $ref: './paths/reservations.yaml#/~1admin~1reservations~1{reservationId}~1status'
+  '/admin/extensions/{extensionId}/approve':
+    $ref: './paths/reservations.yaml#/~1admin~1extensions~1{extensionId}~1approve'
+  '/admin/extensions/{extensionId}/reject':
+    $ref: './paths/reservations.yaml#/~1admin~1extensions~1{extensionId}~1reject'
+  '/auth/otp/request':
+    $ref: './paths/auth.yaml#/~1auth~1otp~1request'
+  '/auth/otp/verify':
+    $ref: './paths/auth.yaml#/~1auth~1otp~1verify'
+  '/auth/refresh':
+    $ref: './paths/auth.yaml#/~1auth~1refresh'
+  '/auth/logout':
+    $ref: './paths/auth.yaml#/~1auth~1logout'
+  '/auth/logout-all':
+    $ref: './paths/auth.yaml#/~1auth~1logout-all'
+  '/auth/sessions':
+    $ref: './paths/auth.yaml#/~1auth~1sessions'
+  '/auth/sessions/{sessionId}/revoke':
+    $ref: './paths/auth.yaml#/~1auth~1sessions~1{sessionId}~1revoke'
+  '/auth/me':
+    $ref: './paths/auth.yaml#/~1auth~1me'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: './components/security.yaml#/bearerAuth'
+  schemas:
+    Money:
+      $ref: './schemas/Money.yaml'
+    ProblemDetails:
+      $ref: './schemas/ProblemDetails.yaml'
+    ErrorCode:
+      $ref: './schemas/ErrorCode.yaml'
+    PageMeta:
+      $ref: './schemas/PageMeta.yaml'
+    RequestMeta:
+      $ref: './schemas/RequestMeta.yaml'
+    ReservationMeta:
+      $ref: './schemas/ReservationMeta.yaml'
+    ReservationStatus:
+      $ref: './schemas/ReservationStatus.yaml'
+    ParticipantStatus:
+      $ref: './schemas/ParticipantStatus.yaml'
+    AllocationStatus:
+      $ref: './schemas/AllocationStatus.yaml'
+    ResourceType:
+      $ref: './schemas/ResourceType.yaml'
+    ExtensionRequestStatus:
+      $ref: './schemas/ExtensionRequestStatus.yaml'
+    AvailabilityStatus:
+      $ref: './schemas/AvailabilityStatus.yaml'
+    ProviderResourceState:
+      $ref: './schemas/ProviderResourceState.yaml'
+    ReservationSource:
+      $ref: './schemas/ReservationSource.yaml'
+    ActorType:
+      $ref: './schemas/ActorType.yaml'
+    Reservation:
+      $ref: './schemas/Reservation.yaml'
+    ReservationSummary:
+      $ref: './schemas/ReservationSummary.yaml'
+    ReservationDetails:
+      $ref: './schemas/ReservationDetails.yaml'
+    ReservationCreateRequest:
+      $ref: './schemas/ReservationCreateRequest.yaml'
+    ReservationUpdateRequest:
+      $ref: './schemas/ReservationUpdateRequest.yaml'
+    ReservationCancelRequest:
+      $ref: './schemas/ReservationCancelRequest.yaml'
+    ReservationExtensionRequestCreate:
+      $ref: './schemas/ReservationExtensionRequestCreate.yaml'
+    ReservationExtensionRequest:
+      $ref: './schemas/ReservationExtensionRequest.yaml'
+    ReservationParticipant:
+      $ref: './schemas/ReservationParticipant.yaml'
+    ReservationResource:
+      $ref: './schemas/ReservationResource.yaml'
+    ReservationComputer:
+      $ref: './schemas/ReservationComputer.yaml'
+    ReservationVIPRoom:
+      $ref: './schemas/ReservationVIPRoom.yaml'
+    ReservationPrice:
+      $ref: './schemas/ReservationPrice.yaml'
+    ReservationConflict:
+      $ref: './schemas/ReservationConflict.yaml'
+    ReservationValidation:
+      $ref: './schemas/ReservationValidation.yaml'
+    ReservationTimeline:
+      $ref: './schemas/ReservationTimeline.yaml'
+    TimelineEntry:
+      $ref: './schemas/TimelineEntry.yaml'
+    ReservationHistory:
+      $ref: './schemas/ReservationHistory.yaml'
+    ReservationStatusHistoryEntry:
+      $ref: './schemas/ReservationStatusHistoryEntry.yaml'
+    ReservationAvailability:
+      $ref: './schemas/ReservationAvailability.yaml'
+    ReservationResourceAvailability:
+      $ref: './schemas/ReservationResourceAvailability.yaml'
+    ReservationStatusView:
+      $ref: './schemas/ReservationStatusView.yaml'
+    UserStatus:
+      $ref: './schemas/UserStatus.yaml'
+    User:
+      $ref: './schemas/User.yaml'
+    OtpRequest:
+      $ref: './schemas/OtpRequest.yaml'
+    OtpChallenge:
+      $ref: './schemas/OtpChallenge.yaml'
+    OtpVerifyRequest:
+      $ref: './schemas/OtpVerifyRequest.yaml'
+    AuthTokens:
+      $ref: './schemas/AuthTokens.yaml'
+    AuthSession:
+      $ref: './schemas/AuthSession.yaml'
+    RevokeSessionRequest:
+      $ref: './schemas/RevokeSessionRequest.yaml'
+    SessionRevokeReason:
+      $ref: './schemas/SessionRevokeReason.yaml'
+  parameters:
+    ReservationId:
+      $ref: './components/parameters.yaml#/ReservationId'
+    ExtensionId:
+      $ref: './components/parameters.yaml#/ExtensionId'
+    Page:
+      $ref: './components/parameters.yaml#/Page'
+    PageSize:
+      $ref: './components/parameters.yaml#/PageSize'
+    Sort:
+      $ref: './components/parameters.yaml#/Sort'
+    Q:
+      $ref: './components/parameters.yaml#/Q'
+    From:
+      $ref: './components/parameters.yaml#/From'
+    To:
+      $ref: './components/parameters.yaml#/To'
+    StatusFilter:
+      $ref: './components/parameters.yaml#/StatusFilter'
+    ClubIdQuery:
+      $ref: './components/parameters.yaml#/ClubIdQuery'
+    PlayerId:
+      $ref: './components/parameters.yaml#/PlayerId'
+    ResourceId:
+      $ref: './components/parameters.yaml#/ResourceId'
+    ResourceTypeQuery:
+      $ref: './components/parameters.yaml#/ResourceTypeQuery'
+    ZoneIds:
+      $ref: './components/parameters.yaml#/ZoneIds'
+    IncludeState:
+      $ref: './components/parameters.yaml#/IncludeState'
+    AdminDate:
+      $ref: './components/parameters.yaml#/AdminDate'
+    IdempotencyKey:
+      $ref: './components/parameters.yaml#/IdempotencyKey'
+    IdempotencyKeyOptional:
+      $ref: './components/parameters.yaml#/IdempotencyKeyOptional'
+    IfMatch:
+      $ref: './components/parameters.yaml#/IfMatch'
+    CorrelationId:
+      $ref: './components/parameters.yaml#/CorrelationId'
+    SessionId:
+      $ref: './components/parameters.yaml#/SessionId'
+    DeviceIdHeader:
+      $ref: './components/parameters.yaml#/DeviceIdHeader'
+    SessionStatusQuery:
+      $ref: './components/parameters.yaml#/SessionStatusQuery'
+  responses:
+    BadRequest:
+      $ref: './components/responses.yaml#/BadRequest'
+    Unauthorized:
+      $ref: './components/responses.yaml#/Unauthorized'
+    Forbidden:
+      $ref: './components/responses.yaml#/Forbidden'
+    NotFound:
+      $ref: './components/responses.yaml#/NotFound'
+    Conflict:
+      $ref: './components/responses.yaml#/Conflict'
+    UnprocessableEntity:
+      $ref: './components/responses.yaml#/UnprocessableEntity'
+    TooManyRequests:
+      $ref: './components/responses.yaml#/TooManyRequests'
+    ServiceUnavailable:
+      $ref: './components/responses.yaml#/ServiceUnavailable'
+  examples:
+    CreateReservationRequest:
+      $ref: './components/examples.yaml#/CreateReservationRequest'
+    CreateReservationResponse:
+      $ref: './components/examples.yaml#/CreateReservationResponse'
+    ReservationDetailsExample:
+      $ref: './components/examples.yaml#/ReservationDetailsExample'
+    ReservationHistoryExample:
+      $ref: './components/examples.yaml#/ReservationHistoryExample'
+    AvailabilityCheckExample:
+      $ref: './components/examples.yaml#/AvailabilityCheckExample'
+    ConflictErrorExample:
+      $ref: './components/examples.yaml#/ConflictErrorExample'
+    ExtensionRequestExample:
+      $ref: './components/examples.yaml#/ExtensionRequestExample'
+    CancellationExample:
+      $ref: './components/examples.yaml#/CancellationExample'
+    ValidationErrorExample:
+      $ref: './components/examples.yaml#/ValidationErrorExample'
+    OtpRequestExample:
+      $ref: './components/examples.yaml#/OtpRequestExample'
+    OtpChallengeExample:
+      $ref: './components/examples.yaml#/OtpChallengeExample'
+    OtpVerifyRequestExample:
+      $ref: './components/examples.yaml#/OtpVerifyRequestExample'
+    OtpVerifyResponseExample:
+      $ref: './components/examples.yaml#/OtpVerifyResponseExample'
+    AuthSessionsExample:
+      $ref: './components/examples.yaml#/AuthSessionsExample'
+    UserExample:
+      $ref: './components/examples.yaml#/UserExample'

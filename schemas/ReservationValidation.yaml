@@ -1,0 +1,38 @@
+type: object
+description: Результат валидации возможности создания брони (без фактического создания).
+required:
+  - valid
+  - conflicts
+properties:
+  valid:
+    type: boolean
+    description: true, если бронь может быть создана без конфликтов и нарушений правил.
+  checks:
+    type: object
+    description: Результаты отдельных проверок.
+    properties:
+      clubOpen:
+        type: boolean
+        description: Клуб открыт в интервале (расписание и закрытия).
+      withinBookingHorizon:
+        type: boolean
+        description: Начало не позднее чем за 24 часа от текущего момента.
+      durationValid:
+        type: boolean
+        description: Длительность в пределах (мин — конфигурируемо, макс — 10 часов).
+      noOverlap:
+        type: boolean
+        description: Нет пересечений с активными бронями.
+      providerStateFresh:
+        type: boolean
+        description: Состояние ресурса от Provider свежее (в пределах provider_state_ttl клуба).
+  conflicts:
+    type: array
+    description: Конфликты пересечения.
+    items:
+      $ref: './ReservationConflict.yaml'
+  warnings:
+    type: array
+    description: Некритичные предупреждения (например, быстрое окончание смены клуба).
+    items:
+      type: string

@@ -1,0 +1,121 @@
+# Переиспользуемые ответы об ошибках модуля Reservations (RFC 9457 Problem Details).
+
+BadRequest:
+  description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        badRequest:
+          value:
+            type: https://docs.visora.kz/problems/validation-error
+            title: Некорректный запрос
+            status: 400
+            code: VALIDATION_ERROR
+            detail: Поле startAt должно быть датой в формате ISO 8601
+            instance: /api/v1/reservations
+            errors:
+              - field: startAt
+                code: FORMAT
+                message: Должно быть формата date-time
+
+Unauthorized:
+  description: Требуется аутентификация или токен недействителен.
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        unauthorized:
+          value:
+            type: https://docs.visora.kz/problems/unauthorized
+            title: Требуется аутентификация
+            status: 401
+            code: UNAUTHORIZED
+            detail: Access token отсутствует или истёк
+            instance: /api/v1/reservations
+
+Forbidden:
+  description: Пользователь аутентифицирован, но не имеет прав на операцию или ресурс вне его scope.
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        forbidden:
+          value:
+            type: https://docs.visora.kz/problems/forbidden
+            title: Доступ запрещён
+            status: 403
+            code: FORBIDDEN
+            detail: Нет разрешения reservation.check_in.club для указанного клуба
+            instance: /api/v1/admin/reservations/3fa85f64-5717-4562-b3fc-2c963f66afa6/check-in
+
+NotFound:
+  description: Ресурс не найден или скрыт scope'ом.
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        notFound:
+          value:
+            type: https://docs.visora.kz/problems/reservation-not-found
+            title: Бронирование не найдено
+            status: 404
+            code: RESERVATION_NOT_FOUND
+            detail: Бронирование не существует или недоступно в текущем контексте
+            instance: /api/v1/reservations/3fa85f64-5717-4562-b3fc-2c963f66afa6
+
+Conflict:
+  description: Конфликт состояния или конкуренция (пересечение броней, версия, идемпотентность).
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        conflict:
+          $ref: './examples.yaml#/ConflictErrorExample'
+
+UnprocessableEntity:
+  description: Запрос синтаксически корректен, но нарушает бизнес-правило.
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        unprocessable:
+          $ref: './examples.yaml#/ValidationErrorExample'
+
+TooManyRequests:
+  description: Превышен rate limit. Повторите позже.
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        tooManyRequests:
+          value:
+            type: https://docs.visora.kz/problems/rate-limited
+            title: Слишком много запросов
+            status: 429
+            code: RATE_LIMITED
+            detail: Превышен лимит запросов, повторите через несколько секунд
+            instance: /api/v1/reservations
+
+ServiceUnavailable:
+  description: Временная недоступность зависимости (например, Provider или база данных).
+  content:
+    application/json:
+      schema:
+        $ref: '../schemas/ProblemDetails.yaml'
+      examples:
+        serviceUnavailable:
+          value:
+            type: https://docs.visora.kz/problems/service-unavailable
+            title: Сервис временно недоступен
+            status: 503
+            code: SERVICE_UNAVAILABLE
+            detail: Не удалось подтвердить состояние ресурса у Provider
+            instance: /api/v1/reservations

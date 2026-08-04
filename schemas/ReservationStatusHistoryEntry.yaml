@@ -1,0 +1,40 @@
+type: object
+description: Запись перехода статуса бронирования (immutable).
+required:
+  - fromStatus
+  - toStatus
+  - actorType
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор записи.
+  reservationId:
+    type: string
+    format: uuid
+  fromStatus:
+    anyOf:
+      - $ref: './ReservationStatus.yaml'
+      - type: 'null'
+    description: Исходный статус; null для создания брони.
+  toStatus:
+    $ref: './ReservationStatus.yaml'
+    description: Новый статус.
+  actorType:
+    $ref: './ActorType.yaml'
+  changedByUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Пользователь-инициатор; null для системных переходов.
+  reasonCode:
+    type: [string, 'null']
+    maxLength: 100
+    description: Стабильный код причины перехода.
+  metadata:
+    type: object
+    description: Минимальный контекст перехода (без PII и секретов).
+  createdAt:
+    type: string
+    format: date-time
+    description: Время перехода (UTC).

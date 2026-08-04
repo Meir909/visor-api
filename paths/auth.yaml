@@ -1,0 +1,332 @@
+# =====================================================================
+# Visora API — Paths модуля Auth
+# =====================================================================
+
+'/auth/otp/request':
+  post:
+    tags:
+      - auth
+    summary: Запросить OTP-код
+    operationId: requestOtp
+    description: |-
+      Отправляет одноразовый код (OTP) на номер телефона. Основной login identifier MVP — телефон в формате E.164.
+
+      **Безопасность OTP:**
+      - Код действует **5 минут**, challenge одноразовый.
+      - Максимум **5 попыток** на challenge.
+      - Интервал повторной отправки — **не менее 60 секунд**.
+      - Лимиты на телефон, IP и device fingerprint (`429 OTP_RATE_LIMITED`).
+      - OTP хранится как HMAC/hash, не plaintext.
+      - Ответ **не раскрывает**, существует ли пользователь и активна ли его учётка: даже для BLOCKED/DEACTIVATED возвращается 200 с challengeId, но SMS не отправляется.
+      - Статический код (`devStaticCode`) возвращается только в non-production среде.
+    security: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/DeviceIdHeader'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OtpRequest.yaml'
+          examples:
+            requestOtp:
+              $ref: '../components/examples.yaml#/OtpRequestExample'
+    responses:
+      '200':
+        description: Код отправлен. Поле `retryAfterSeconds` задаёт минимальный интервал до повторного запроса.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/OtpChallenge.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              otpChallenge:
+                $ref: '../components/examples.yaml#/OtpChallengeExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/auth/otp/verify':
+  post:
+    tags:
+      - auth
+    summary: Верифицировать OTP-код и войти
+    operationId: verifyOtp
+    description: |-
+      Атомарно проверяет и «потребляет» одноразовый код. При успехе находит или создаёт пользователя (`findOrCreateUser(phone)`) и создаёт server-side session с парой токенов.
+
+      **Токены:**
+      - `accessToken` — JWT 10–15 минут, claim-ы: `sub`, `sid`, `iat`, `exp`, `iss`, `aud`.
+      - `refreshToken` — случайный opaque токен, на сервере хранится только hash; срок 30 дней, rotation при каждом refresh.
+
+      **Доставка refresh token:**
+      - Web: только в `Set-Cookie` (HttpOnly, Secure, SameSite=Lax); в теле `refreshToken` отсутствует.
+      - Mobile: в теле ответа; клиент хранит в OS secure storage.
+
+      **Идемпотентность:** повторный verify с тем же `challengeId` невозможен (challenge одноразовый).
+    security: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OtpVerifyRequest.yaml'
+          examples:
+            verifyOtp:
+              $ref: '../components/examples.yaml#/OtpVerifyRequestExample'
+    responses:
+      '200':
+        description: Аутентификация успешна. Для web в заголовках ответа дополнительно устанавливается refresh cookie.
+        headers:
+          Set-Cookie:
+            description: Refresh token cookie (web). HttpOnly, Secure, SameSite=Lax; `refresh_token=<value>; Path=/api/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax`.
+            schema:
+              type: string
+            example: refresh_token=v1.refresh.9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f; Path=/api/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/AuthTokens.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              verifyOtp:
+                $ref: '../components/examples.yaml#/OtpVerifyResponseExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+      '503':
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/auth/refresh':
+  post:
+    tags:
+      - auth
+    summary: Обновить пару токенов
+    operationId: refreshSession
+    description: |-
+      Выполняет ротацию refresh token: старый атомарно помечается использованным и выдаётся новый.
+
+      **Replay protection:**
+      - Повторное использование старого токена считается replay attack → вся token family отзывается (`409 REFRESH_TOKEN_REPLAY`) и создаётся security event.
+      - Срок жизни refresh token — 30 дней; `expires_at > created_at`.
+      - Пользователь с `status = BLOCKED` или `DEACTIVATED` не получает новый токен (`422 USER_BLOCKED` / `USER_DEACTIVATED`).
+
+      **Источник refresh token:** cookie `refresh_token` (web) либо поле `refreshToken` в теле (mobile).
+    security: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              refreshToken:
+                type: string
+                description: Refresh token для mobile-клиентов. Для web передаётся в cookie и это поле не заполняется.
+      description: Опционально для mobile; для web токен берётся из HttpOnly cookie.
+    responses:
+      '200':
+        description: Новая пара токенов. Refresh cookie (web) обновляется в заголовке `Set-Cookie`.
+        headers:
+          Set-Cookie:
+            description: Обновлённый refresh token cookie (web).
+            schema:
+              type: string
+            example: refresh_token=v1.refresh.0e9f8a7b-6c5d-4e3f-8a2b-1c0d9e8f7a6b; Path=/api/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/AuthTokens.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              refresh:
+                $ref: '../components/examples.yaml#/OtpVerifyResponseExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/auth/logout':
+  post:
+    tags:
+      - auth
+    summary: Выйти из текущей сессии
+    operationId: logout
+    description: |-
+      Отзывает текущую refresh-сессию. Access token продолжает действовать до истечения TTL (10–15 минут) — это ограничение компенсируется коротким сроком жизни.
+
+      Для web refresh token берётся из cookie; для mobile — из поля `refreshToken` в теле. Операция аудируется.
+    security: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              refreshToken:
+                type: string
+                description: Refresh token для mobile-клиентов.
+      description: Опционально для mobile; для web токен берётся из HttpOnly cookie.
+    responses:
+      '204':
+        description: Сессия отозвана. Для web сервер также удаляет refresh cookie (`Max-Age=0`).
+        headers:
+          Set-Cookie:
+            description: Очищенная refresh cookie (web).
+            schema:
+              type: string
+            example: refresh_token=; Path=/api/v1/auth; Max-Age=0; HttpOnly; Secure; SameSite=Lax
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/auth/logout-all':
+  post:
+    tags:
+      - auth
+    summary: Выйти со всех устройств
+    operationId: logoutAll
+    description: |
+      Отзывает **все** активные refresh-сессии пользователя, включая текущую. Применяется при компрометации устройства. Создаётся security event.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '204':
+        description: Все сессии отозваны.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+
+'/auth/sessions':
+  get:
+    tags:
+      - auth
+    summary: Список активных сессий
+    operationId: listSessions
+    description: |
+      Возвращает сессии текущего пользователя с пометкой `isCurrent`. Позволяет управлять устройствами из UI.
+
+      Пагинация: `page`, `pageSize` (по умолчанию 1 и 20, максимум 100).
+    parameters:
+      - $ref: '../components/parameters.yaml#/SessionStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Список сессий.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/AuthSession.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              sessions:
+                $ref: '../components/examples.yaml#/AuthSessionsExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/auth/sessions/{sessionId}/revoke':
+  post:
+    tags:
+      - auth
+    summary: Отозвать сессию
+    operationId: revokeSession
+    description: |
+      Отзывает конкретную сессию пользователя (например, потерянное устройство). Отзыв собственной текущей сессии допустим.
+
+      Повторный отзыв идемпотентен: сессия в статусе revoked возвращает 204.
+    parameters:
+      - $ref: '../components/parameters.yaml#/SessionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/RevokeSessionRequest.yaml'
+      description: Опциональная причина для аудита.
+    responses:
+      '204':
+        description: Сессия отозвана.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+'/auth/me':
+  get:
+    tags:
+      - auth
+    summary: Текущий пользователь
+    operationId: getCurrentUser
+    description: |
+      Возвращает публичный профиль пользователя, аутентифицированного access token'ом.
+
+      При `status = DEACTIVATED` профиль недоступен (`401`/`422 USER_DEACTIVATED`). Профиль и membership не кешируются в токене — API всегда резолвит их из базы/short-lived кеша.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Профиль текущего пользователя.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/User.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              me:
+                $ref: '../components/examples.yaml#/UserExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'

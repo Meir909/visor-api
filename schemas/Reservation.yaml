@@ -1,0 +1,107 @@
+type: object
+description: Заголовок бронирования (агрегат). Выделенные ресурсы и участники — в ReservationDetails.
+required:
+  - id
+  - organizationId
+  - clubId
+  - playerUserId
+  - reservationNumber
+  - status
+  - startAt
+  - endAt
+  - price
+  - version
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор бронирования.
+    example: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+  organizationId:
+    type: string
+    format: uuid
+    description: Tenant (организация), владелец брони.
+  clubId:
+    type: string
+    format: uuid
+    description: Клуб, в котором создана бронь.
+  clubName:
+    type: [string, 'null']
+    description: Название клуба (denormalized для отображения).
+    example: Cyber Arena
+  playerUserId:
+    type: string
+    format: uuid
+    description: Основной игрок / владелец брони.
+  reservationNumber:
+    type: string
+    maxLength: 32
+    description: Человекочитаемый номер брони в рамках клуба.
+    example: VR-20260804-00042
+  status:
+    $ref: './ReservationStatus.yaml'
+  startAt:
+    type: string
+    format: date-time
+    description: Начало брони (UTC).
+  endAt:
+    type: string
+    format: date-time
+    description: Окончание брони (UTC). Должно быть позже startAt.
+  arrivalDeadlineAt:
+    type: [string, 'null']
+    format: date-time
+    description: Дедлайн прибытия; обычно startAt + grace клуба (по умолчанию 10 минут).
+  checkedInAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время подтверждения прихода.
+  checkedInByUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Администратор, подтвердивший приход.
+  cancelledAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время отмены.
+  cancelledByUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Кто отменил.
+  cancellationReason:
+    type: [string, 'null']
+    maxLength: 500
+    description: Причина отмены.
+  completedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время завершения.
+  expiredAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время перехода в EXPIRED.
+  noShowAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время фиксации неявки.
+  source:
+    $ref: './ReservationSource.yaml'
+  notes:
+    type: [string, 'null']
+    maxLength: 1000
+    description: Заметки (административные, без секретов и PII).
+  price:
+    $ref: './ReservationPrice.yaml'
+  version:
+    type: integer
+    minimum: 0
+    description: Версия оптимистичной блокировки (для If-Match).
+    example: 3
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

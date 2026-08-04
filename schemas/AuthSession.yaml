@@ -1,0 +1,51 @@
+type: object
+description: Серверная сессия аутентификации. Хранит устройство и состояние отзыва; привязана к паре токенов.
+required:
+  - id
+  - userId
+  - createdAt
+  - expiresAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор сессии (claim `sid` access token).
+  userId:
+    type: string
+    format: uuid
+    description: Владелец сессии.
+  deviceId:
+    type: [string, 'null']
+    maxLength: 160
+    description: Клиентский идентификатор устройства.
+  deviceName:
+    type: [string, 'null']
+    maxLength: 160
+    description: Отображаемое имя устройства.
+  activeOrganizationId:
+    type: [string, 'null']
+    format: uuid
+    description: Последний выбранный tenant-контекст. Не является авторизационным grant; membership всегда проверяется отдельно.
+  isCurrent:
+    type: boolean
+    description: Текущая сессия вызывающего.
+    default: false
+  createdAt:
+    type: string
+    format: date-time
+  lastUsedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время последней ротации refresh token.
+  expiresAt:
+    type: string
+    format: date-time
+    description: Срок действия refresh token (30 дней).
+  revokedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время отзыва (logout, replay, администратор).
+  revokeReason:
+    type: [string, 'null']
+    maxLength: 120
+    description: Причина отзыва.

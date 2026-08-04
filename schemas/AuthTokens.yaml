@@ -1,0 +1,25 @@
+type: object
+description: Пара токенов после успешной аутентификации или refresh. Refresh token для web передаётся в HttpOnly Secure cookie; для mobile — в теле ответа.
+required:
+  - accessToken
+  - tokenType
+  - expiresInSeconds
+  - session
+properties:
+  accessToken:
+    type: string
+    description: 'Короткоживущий JWT (10–15 минут). Передаётся в `Authorization: Bearer <token>`.'
+  tokenType:
+    type: string
+    enum:
+      - Bearer
+    default: Bearer
+  expiresInSeconds:
+    type: integer
+    description: Срок действия access token в секундах.
+    example: 900
+  refreshToken:
+    type: [string, 'null']
+    description: Opaque refresh token. Возвращается в теле только для mobile; для web передаётся в Set-Cookie (HttpOnly, Secure, SameSite=Lax) и здесь отсутствует.
+  session:
+    $ref: './AuthSession.yaml'

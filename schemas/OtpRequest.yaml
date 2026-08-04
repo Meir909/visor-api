@@ -1,0 +1,16 @@
+type: object
+description: Запрос одноразового кода (OTP) по номеру телефона.
+required:
+  - phone
+properties:
+  phone:
+    type: string
+    maxLength: 20
+    pattern: '^\+[1-9]\d{1,14}$'
+    description: Номер телефона в формате E.164, например `+77012345678`.
+    example: '+77012345678'
+  deviceId:
+    type: string
+    maxLength: 160
+    description: Клиентский идентификатор устройства для rate limiting и привязки сессии.
+    example: android-8f4a2c

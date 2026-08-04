@@ -1,0 +1,28 @@
+type: object
+description: Текущий статус бронирования и доступные действия.
+required:
+  - reservationId
+  - status
+  - version
+properties:
+  reservationId:
+    type: string
+    format: uuid
+    description: Идентификатор бронирования.
+  status:
+    $ref: './ReservationStatus.yaml'
+  version:
+    type: integer
+    description: Версия агрегата.
+  updatedAt:
+    type: string
+    format: date-time
+    description: Время последнего изменения.
+  availableActions:
+    type: array
+    description: Действия, доступные вызывающему.
+    items:
+      type: string
+    example:
+      - cancel
+      - requestExtension

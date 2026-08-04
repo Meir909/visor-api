@@ -1,0 +1,40 @@
+type: object
+description: Запись хронологии бронирования.
+required:
+  - eventType
+  - occurredAt
+properties:
+  eventType:
+    type: string
+    description: Тип события.
+    enum:
+      - CREATED
+      - CONFIRMED
+      - CHECKED_IN
+      - ACTIVE
+      - COMPLETED
+      - CANCELLED
+      - EXPIRED
+      - NO_SHOW
+      - REJECTED
+      - EXTENSION_REQUESTED
+      - EXTENSION_APPROVED
+      - EXTENSION_REJECTED
+      - MOVED
+      - UPDATED
+  occurredAt:
+    type: string
+    format: date-time
+    description: Время события (UTC).
+  actorType:
+    $ref: './ActorType.yaml'
+  actorUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Пользователь-инициатор, если применимо.
+  description:
+    type: string
+    description: Краткое описание события.
+  metadata:
+    type: object
+    description: Дополнительный контекст (без PII и секретов).

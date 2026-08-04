@@ -1,0 +1,7 @@
+type: string
+description: Источник создания бронирования.
+enum:
+  - PLAYER_WEB
+  - ADMIN
+  - MOBILE
+  - KIOSK

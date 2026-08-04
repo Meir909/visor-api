@@ -1,0 +1,7 @@
+type: object
+description: Запрос на отзыв сессии. Позволяет указать причину для аудита.
+properties:
+  reason:
+    type: string
+    maxLength: 120
+    description: Причина отзыва (например, `Устройство потеряно`).

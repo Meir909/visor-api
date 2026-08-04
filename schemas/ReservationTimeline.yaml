@@ -1,0 +1,13 @@
+type: object
+description: Хронология событий бронирования (включая продления, перемещения, обновления).
+required:
+  - reservationId
+  - items
+properties:
+  reservationId:
+    type: string
+    format: uuid
+  items:
+    type: array
+    items:
+      $ref: './TimelineEntry.yaml'

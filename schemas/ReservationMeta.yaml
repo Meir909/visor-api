@@ -1,0 +1,30 @@
+type: object
+description: Метаданные ответа для мутаций бронирования (создание, действия). Содержит актуальную версию агрегата для If-Match.
+required:
+  - reservationId
+  - version
+properties:
+  requestId:
+    type: string
+    format: uuid
+    description: Идентификатор запроса (correlation).
+  timestamp:
+    type: string
+    format: date-time
+    description: Время формирования ответа (UTC).
+  reservationId:
+    type: string
+    format: uuid
+    description: Идентификатор бронирования.
+  reservationNumber:
+    type: string
+    description: Номер бронирования.
+  version:
+    type: integer
+    description: Текущая версия агрегата (используется в If-Match).
+    minimum: 0
+  availableActions:
+    type: array
+    description: Действия, доступные вызывающему для текущего статуса.
+    items:
+      type: string

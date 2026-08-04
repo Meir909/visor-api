@@ -1,0 +1,29 @@
+type: object
+description: Доступность ресурсов клуба в запрошенном интервале.
+required:
+  - clubId
+  - from
+  - to
+  - resources
+properties:
+  clubId:
+    type: string
+    format: uuid
+    description: Клуб.
+  from:
+    type: string
+    format: date-time
+    description: Начало запрошенного интервала (inclusive).
+  to:
+    type: string
+    format: date-time
+    description: Конец запрошенного интервала (exclusive).
+  timezone:
+    type: string
+    description: IANA-таймзона клуба (локальные правила).
+    example: Asia/Almaty
+  resources:
+    type: array
+    description: Доступность по каждому ресурсу.
+    items:
+      $ref: './ReservationResourceAvailability.yaml'

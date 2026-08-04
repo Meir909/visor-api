@@ -1,0 +1,41 @@
+allOf:
+  - $ref: './Reservation.yaml'
+  - type: object
+    description: 'Полное представление бронирования: ресурсы, участники, история продлений и доступные действия.'
+    required:
+      - allocations
+      - participants
+      - availableActions
+    properties:
+      allocations:
+        type: array
+        description: Выделенные ресурсы (компьютеры и/или VIP-комнаты).
+        items:
+          $ref: './ReservationResource.yaml'
+      participants:
+        type: array
+        description: Участники брони.
+        items:
+          $ref: './ReservationParticipant.yaml'
+      extensions:
+        type: array
+        description: История запросов на продление.
+        items:
+          $ref: './ReservationExtensionRequest.yaml'
+      availableActions:
+        type: array
+        description: Действия, доступные вызывающему для текущего статуса и его роли.
+        items:
+          type: string
+          enum:
+            - cancel
+            - requestExtension
+            - checkIn
+            - reject
+            - complete
+            - expire
+            - move
+            - update
+        example:
+          - cancel
+          - requestExtension

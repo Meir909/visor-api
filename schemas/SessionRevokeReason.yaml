@@ -1,0 +1,8 @@
+type: string
+description: Причина отзыва refresh-сессии.
+enum:
+  - LOGOUT
+  - SECURITY
+  - ADMIN
+  - REPLACED
+example: LOGOUT

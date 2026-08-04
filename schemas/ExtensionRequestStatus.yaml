@@ -1,0 +1,14 @@
+type: string
+description: Статус запроса на продление.
+enum:
+  - PENDING
+  - APPROVED
+  - REJECTED
+  - EXPIRED
+  - CANCELLED
+x-enum-descriptions:
+  PENDING: Ожидает решения администратора.
+  APPROVED: Продление утверждено, время брони расширено.
+  REJECTED: Продление отклонено.
+  EXPIRED: Запрос устарел (expires_at).
+  CANCELLED: Отменён инициатором.

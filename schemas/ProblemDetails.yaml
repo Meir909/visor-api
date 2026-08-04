@@ -1,0 +1,56 @@
+type: object
+description: |
+  Структура ошибки, совместимая с RFC 9457 (Problem Details).
+  Frontend принимает решения по полю `code`, а не парсит `detail`.
+required:
+  - type
+  - title
+  - status
+  - code
+properties:
+  type:
+    type: string
+    format: uri-reference
+    description: URI документации проблемы.
+    example: https://docs.visora.kz/problems/reservation-slot-conflict
+  title:
+    type: string
+    description: Краткий человекочитаемый заголовок проблемы.
+    example: Бронирование конфликтует с существующим
+  status:
+    type: integer
+    description: HTTP-статус ответа.
+    minimum: 100
+    maximum: 599
+    example: 409
+  detail:
+    type: string
+    description: Детальное описание проблемы.
+  instance:
+    type: string
+    format: uri-reference
+    description: Конкретное вхождение (обычно путь запроса).
+    example: /api/v1/reservations
+  code:
+    type: string
+    description: Машиночитаемый код ошибки (см. схему ErrorCode).
+    $ref: './ErrorCode.yaml'
+  correlationId:
+    type: string
+    format: uuid
+    description: Идентификатор корреляции для трассировки.
+  errors:
+    type: array
+    description: Детали ошибок валидации по полям.
+    items:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Путь к полю (например `resourceIds`).
+        code:
+          type: string
+          description: Код ошибки поля.
+        message:
+          type: string
+          description: Описание ошибки.

@@ -1,0 +1,12 @@
+type: string
+description: Статус выделения (allocation) ресурса в брони.
+enum:
+  - HELD
+  - CONFIRMED
+  - ACTIVE
+  - RELEASED
+x-enum-descriptions:
+  HELD: Заблокировано на время брони (до подтверждения).
+  CONFIRMED: Подтверждено, блокирует инвентарь.
+  ACTIVE: Ресурс используется.
+  RELEASED: Освобождено, больше не блокирует инвентарь (история сохраняется).

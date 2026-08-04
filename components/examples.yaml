@@ -1,0 +1,415 @@
+# Примеры запросов и ответов модуля Reservations.
+
+CreateReservationRequest:
+  summary: Запрос на создание бронирования
+  value:
+    clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+    resourceIds:
+      - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+    startAt: '2026-08-04T15:00:00Z'
+    endAt: '2026-08-04T17:00:00Z'
+    participantCount: 1
+    source: PLAYER_WEB
+
+CreateReservationResponse:
+  summary: Успешное создание бронирования (201)
+  value:
+    data:
+      id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      organizationId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+      clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+      clubName: Cyber Arena
+      playerUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      reservationNumber: VR-20260804-00042
+      status: PENDING
+      startAt: '2026-08-04T15:00:00Z'
+      endAt: '2026-08-04T17:00:00Z'
+      arrivalDeadlineAt: '2026-08-04T15:10:00Z'
+      source: PLAYER_WEB
+      price:
+        subtotalMinor: '600000'
+        discountMinor: '0'
+        totalMinor: '600000'
+        depositMinor: '120000'
+        currency: KZT
+        components:
+          - componentType: BASE
+            description: 2 часа × 300000 KZT/час
+            quantity: 2
+            amountMinor: '600000'
+      version: 1
+      createdAt: '2026-08-04T10:12:30Z'
+      updatedAt: '2026-08-04T10:12:30Z'
+      allocations:
+        - allocationId: 4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          resourceType: COMPUTER
+          code: PC-12
+          displayName: PC 12
+          zoneName: Main Hall
+          status: HELD
+          startsAt: '2026-08-04T15:00:00Z'
+          endsAt: '2026-08-04T17:00:00Z'
+          computer:
+            computerId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            number: 12
+            displayName: PC 12
+            gpu: RTX 4070
+            cpu: Ryzen 7 7700
+            ramGb: 32
+            state: AVAILABLE
+      participants:
+        - id: 8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+          userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          participantStatus: CONFIRMED
+          isPrimary: true
+          createdAt: '2026-08-04T10:12:30Z'
+      availableActions:
+        - cancel
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:12:30Z'
+      reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      reservationNumber: VR-20260804-00042
+      version: 1
+      availableActions:
+        - cancel
+
+ReservationDetailsExample:
+  summary: Детали подтверждённого бронирования
+  value:
+    data:
+      id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      organizationId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+      clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+      clubName: Cyber Arena
+      playerUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      reservationNumber: VR-20260804-00042
+      status: CONFIRMED
+      startAt: '2026-08-04T15:00:00Z'
+      endAt: '2026-08-04T17:00:00Z'
+      arrivalDeadlineAt: '2026-08-04T15:10:00Z'
+      source: PLAYER_WEB
+      price:
+        subtotalMinor: '600000'
+        discountMinor: '60000'
+        totalMinor: '540000'
+        depositMinor: '120000'
+        currency: KZT
+        components:
+          - componentType: BASE
+            description: 2 часа × 300000 KZT/час
+            quantity: 2
+            amountMinor: '600000'
+          - componentType: DISCOUNT
+            description: Промо Early Bird -10%
+            quantity: 1
+            amountMinor: '-60000'
+      version: 3
+      createdAt: '2026-08-04T10:12:30Z'
+      updatedAt: '2026-08-04T10:13:05Z'
+      allocations:
+        - allocationId: 4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          resourceType: COMPUTER
+          code: PC-12
+          displayName: PC 12
+          zoneName: Main Hall
+          status: CONFIRMED
+          startsAt: '2026-08-04T15:00:00Z'
+          endsAt: '2026-08-04T17:00:00Z'
+          computer:
+            computerId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            number: 12
+            displayName: PC 12
+            gpu: RTX 4070
+            cpu: Ryzen 7 7700
+            ramGb: 32
+            state: AVAILABLE
+      participants:
+        - id: 8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+          userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          participantStatus: CONFIRMED
+          isPrimary: true
+          createdAt: '2026-08-04T10:12:30Z'
+      extensions: []
+      availableActions:
+        - cancel
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:13:06Z'
+
+ReservationHistoryExample:
+  summary: История смены статусов бронирования
+  value:
+    data:
+      reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      items:
+        - id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          fromStatus: null
+          toStatus: DRAFT
+          actorType: USER
+          changedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          reasonCode: CREATE
+          createdAt: '2026-08-04T10:12:30Z'
+        - id: b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          fromStatus: DRAFT
+          toStatus: PENDING
+          actorType: USER
+          changedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          reasonCode: SUBMIT
+          createdAt: '2026-08-04T10:12:31Z'
+        - id: c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          fromStatus: PENDING
+          toStatus: CONFIRMED
+          actorType: SYSTEM
+          reasonCode: DEPOSIT_ACCEPTED
+          createdAt: '2026-08-04T10:13:05Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:13:06Z'
+
+AvailabilityCheckExample:
+  summary: Проверка доступности ресурсов
+  value:
+    data:
+      clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+      from: '2026-08-04T15:00:00Z'
+      to: '2026-08-04T18:00:00Z'
+      timezone: Asia/Almaty
+      resources:
+        - resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          resourceType: COMPUTER
+          code: PC-12
+          displayName: PC 12
+          zoneName: Main Hall
+          state: AVAILABLE
+          stateObservedAt: '2026-08-04T10:11:00Z'
+          availability:
+            - startAt: '2026-08-04T15:00:00Z'
+              endAt: '2026-08-04T17:00:00Z'
+              status: UNAVAILABLE
+              reason: Пересечение с бронью VR-20260804-00039
+              conflictingReservationId: 9f8e7d6c-5b4a-4c3d-2e1f-0a9b8c7d6e5f
+            - startAt: '2026-08-04T17:00:00Z'
+              endAt: '2026-08-04T18:00:00Z'
+              status: AVAILABLE
+        - resourceId: 6e5f4a3b-2c1d-4e0f-8a9b-0c1d2e3f4a5b
+          resourceType: COMPUTER
+          code: PC-13
+          displayName: PC 13
+          zoneName: Main Hall
+          state: IN_USE
+          stateObservedAt: '2026-08-04T10:10:30Z'
+          availability:
+            - startAt: '2026-08-04T15:00:00Z'
+              endAt: '2026-08-04T18:00:00Z'
+              status: AVAILABLE
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:11:02Z'
+
+ConflictErrorExample:
+  summary: Ошибка конфликта бронирования (409)
+  value:
+    type: https://docs.visora.kz/problems/reservation-slot-conflict
+    title: Бронирование конфликтует с существующим
+    status: 409
+    code: RESERVATION_SLOT_CONFLICT
+    detail: Выбранный компьютер уже занят в указанный интервал
+    instance: /api/v1/reservations
+    correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+    errors:
+      - field: resourceIds
+        code: COMPUTER_ALREADY_RESERVED
+        message: PC-12 занят с 15:00 до 17:00
+
+ExtensionRequestExample:
+  summary: Запрос на продление брони (201)
+  value:
+    data:
+      id: 7d8e9f0a-4a1b-4c2d-8e3f-5a6b7c8d9e0f
+      reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+      requestedEndAt: '2026-08-04T19:00:00Z'
+      status: PENDING
+      requestedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      expiresAt: '2026-08-04T17:30:00Z'
+      currency: KZT
+      createdAt: '2026-08-04T16:00:00Z'
+      updatedAt: '2026-08-04T16:00:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T16:00:00Z'
+
+CancellationExample:
+  summary: Отменённое бронирование (200)
+  value:
+    data:
+      id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      organizationId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+      clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+      clubName: Cyber Arena
+      playerUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      reservationNumber: VR-20260804-00042
+      status: CANCELLED
+      startAt: '2026-08-04T15:00:00Z'
+      endAt: '2026-08-04T17:00:00Z'
+      arrivalDeadlineAt: '2026-08-04T15:10:00Z'
+      cancelledAt: '2026-08-04T12:00:00Z'
+      cancelledByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      cancellationReason: Передумал
+      source: PLAYER_WEB
+      price:
+        subtotalMinor: '600000'
+        discountMinor: '60000'
+        totalMinor: '540000'
+        depositMinor: '120000'
+        currency: KZT
+        components: []
+      version: 4
+      createdAt: '2026-08-04T10:12:30Z'
+      updatedAt: '2026-08-04T12:00:00Z'
+      allocations:
+        - allocationId: 4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          resourceType: COMPUTER
+          code: PC-12
+          displayName: PC 12
+          zoneName: Main Hall
+          status: RELEASED
+          startsAt: '2026-08-04T15:00:00Z'
+          endsAt: '2026-08-04T17:00:00Z'
+          releasedAt: '2026-08-04T12:00:00Z'
+          releaseReason: CANCELLATION
+          computer:
+            computerId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            number: 12
+            displayName: PC 12
+            gpu: RTX 4070
+            cpu: Ryzen 7 7700
+            ramGb: 32
+            state: AVAILABLE
+      participants:
+        - id: 8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+          userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          participantStatus: DECLINED
+          isPrimary: true
+          createdAt: '2026-08-04T10:12:30Z'
+      extensions: []
+      availableActions: []
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T12:00:00Z'
+      reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      reservationNumber: VR-20260804-00042
+      version: 4
+      availableActions: []
+
+ValidationErrorExample:
+  summary: Нарушение бизнес-правила (422)
+  value:
+    type: https://docs.visora.kz/problems/business-rule-violation
+    title: Нарушено бизнес-правило
+    status: 422
+    code: MAXIMUM_DURATION_EXCEEDED
+    detail: Длительность брони превышает максимум 10 часов
+    instance: /api/v1/reservations
+    correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+    errors:
+      - field: endAt
+        code: MAXIMUM_DURATION_EXCEEDED
+        message: Интервал не может превышать 10 часов
+
+OtpRequestExample:
+  summary: Запрос OTP-кода
+  value:
+    phone: '+77012345678'
+    deviceId: android-8f4a2c
+
+OtpChallengeExample:
+  summary: Ответ на запрос OTP-кода
+  value:
+    data:
+      challengeId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+      maskedPhone: +7 701 *** 78 90
+      retryAfterSeconds: 60
+      expiresInSeconds: 300
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:12:30Z'
+
+OtpVerifyRequestExample:
+  summary: Верификация OTP-кода
+  value:
+    challengeId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+    code: '481293'
+    deviceId: android-8f4a2c
+    deviceName: Chrome on macOS
+
+OtpVerifyResponseExample:
+  summary: 'Успешная аутентификация (мобильный: refresh token в теле)'
+  value:
+    data:
+      accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1YTRiM2MyZC0xZTJmLTRhM2ItOGM3ZC02ZTVmNGEzYjJjMWQiLCJzaWQiOiJiNGMxZDllOC0zZTJmLTRhNWItOGM2ZC03ZThmOWEwYjFjMmQiLCJpc3MiOiJodHRwczovL2FwaS52aXNvcmEua3oiLCJhdWQiOiJ2aXNvcmEtYXBpIiwiaWF0IjoxNzI4NTAwMDAwLCJleHAiOjE3Mjg1MDA5MDB9.signature
+      tokenType: Bearer
+      expiresInSeconds: 900
+      refreshToken: v1.refresh.9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f
+      session:
+        id: b4c1d9e8-3e2f-4a5b-8c6d-7e8f9a0b1c2d
+        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        deviceId: android-8f4a2c
+        deviceName: Chrome on macOS
+        isCurrent: true
+        createdAt: '2026-08-04T10:13:06Z'
+        lastUsedAt: '2026-08-04T10:13:06Z'
+        expiresAt: '2026-09-03T10:13:06Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:13:06Z'
+
+AuthSessionsExample:
+  summary: Список активных сессий пользователя
+  value:
+    data:
+      - id: b4c1d9e8-3e2f-4a5b-8c6d-7e8f9a0b1c2d
+        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        deviceId: android-8f4a2c
+        deviceName: Chrome on macOS
+        isCurrent: true
+        createdAt: '2026-08-04T10:13:06Z'
+        lastUsedAt: '2026-08-04T10:13:06Z'
+        expiresAt: '2026-09-03T10:13:06Z'
+      - id: c5d2e9f8-4f3a-4b6c-9d3e-2b1c0d9e8f7a
+        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        deviceId: ios-77b3d9
+        deviceName: iPhone 15
+        isCurrent: false
+        createdAt: '2026-08-01T18:40:00Z'
+        lastUsedAt: '2026-08-02T09:15:00Z'
+        expiresAt: '2026-08-31T18:40:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+UserExample:
+  summary: Публичный профиль пользователя
+  value:
+    data:
+      id: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+      phoneE164: '+77012345678'
+      displayName: Dastan
+      locale: ru-KZ
+      status: ACTIVE
+      phoneVerifiedAt: '2026-08-04T10:13:06Z'
+      lastLoginAt: '2026-08-04T10:13:06Z'
+      createdAt: '2026-08-04T10:13:06Z'
+      updatedAt: '2026-08-04T10:13:06Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:13:06Z'

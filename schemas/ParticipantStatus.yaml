@@ -1,0 +1,7 @@
+type: string
+description: Статус участника бронирования.
+enum:
+  - INVITED
+  - CONFIRMED
+  - CHECKED_IN
+  - DECLINED

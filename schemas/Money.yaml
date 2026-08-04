@@ -1,0 +1,18 @@
+type: object
+description: Денежная сумма в минимальных единицах валюты (minor units).
+required:
+  - amountMinor
+  - currency
+properties:
+  amountMinor:
+    type: string
+    description: Целое число минимальных единиц валюты, сериализованное строкой (bigint). Без дробной части.
+    pattern: '^-?\d+$'
+    example: '300000'
+  currency:
+    type: string
+    description: Код валюты ISO 4217.
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT

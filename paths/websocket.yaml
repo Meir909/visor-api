@@ -1,0 +1,399 @@
+# =====================================================================
+# Visora API — WebSocket-каналы и события модуля Reservations
+# =====================================================================
+# Справочный документ. OpenAPI 3.1 не описывает WebSocket-каналы нативно;
+# транспорт и события задокументированы здесь, а контракты payload ссылаются
+# на компоненты из openapi.yaml.
+#
+# REST остаётся authoritative API: WebSocket доставляет только уведомления
+# об изменениях. Клиент не должен полагаться на порядок и гарантии доставки
+# событий для бизнес-логики — источник истины всегда REST.
+
+description: |
+  # WebSocket: каналы и события (Reservations)
+
+  ## Транспорт
+
+  - **URL:** `wss://api.visora.kz/api/v1/ws`
+  - **Аутентификация:** `Sec-WebSocket-Protocol: bearer, <access-token>` (первый субпротокол — протокол, второй — токен). Токен — тот же JWT, что и для REST (короткоживущий, 10–15 минут).
+  - **Продление:** перед истечением токена клиент вызывает `POST /api/v1/auth/refresh` (HttpOnly cookie) и переустанавливает соединение с новым токеном.
+  - **Heartbeat:** сервер шлёт ping каждые 30 секунд; клиент обязан отвечать pong. При отсутствии pong в течение 90 секунд сервер закрывает соединение с кодом `4000`.
+  - **Reconnect:** клиент переподключается с экспоненциальной задержкой (1s → 2s → 4s → … до 60s). После reconnect клиент подписывается заново.
+  - **Resume:** соединение устанавливает `{ "op": "resume", "lastEventId": "<string>" }`. Сервер возвращает события, опубликованные после `lastEventId` (окно хранения — 5 минут); за пределами окна клиент должен восстановить состояние через REST.
+
+  ## Envelope события
+
+  Каждое событие — одно JSON-сообщение:
+
+  ```json
+  {
+    "op": "event",
+    "eventId": "01J2XK7VZ8Q0W3T6B9RYA5D4CE",
+    "event": "reservation.created.v1",
+    "version": 1,
+    "occurredAt": "2026-08-04T10:12:30.123Z",
+    "correlationId": "4b1c9d8e-2a3b-4c5d-8e6f-1a2b3c4d5e6f",
+    "actor": {
+      "type": "PLAYER",
+      "userId": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    },
+    "channel": "user.3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "data": {
+      "reservationId": "2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c",
+      "clubId": "4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
+      "status": "PENDING",
+      "version": 1
+    }
+  }
+  ```
+
+  Поля `op`, `eventId`, `event`, `occurredAt`, `channel` обязательны. `actor` и `correlationId` опциональны и отсутствуют для системных событий (scheduler).
+
+  ## Серверные сообщения
+
+  | `op` | Назначение |
+  |---|---|
+  | `event` | Уведомление об изменении (см. события ниже). |
+  | `subscribed` | Подтверждение подписки: `{ "op": "subscribed", "channels": [...] }`. |
+  | `unsubscribed` | Подтверждение отписки. |
+  | `error` | Ошибка: `{ "op": "error", "code": "WS_UNAUTHORIZED", "detail": "..." }`. |
+  | `ping` | Heartbeat (сервер → клиент). |
+  | `pong` | Ответ клиента на ping. |
+
+  Ошибки:
+
+  | `code` | Когда |
+  |---|---|
+  | `WS_UNAUTHORIZED` | Токен отсутствует/просрочен. |
+  | `WS_INVALID_MESSAGE` | Malformed JSON или неизвестный `op`. |
+  | `WS_FORBIDDEN_CHANNEL` | Нет прав на канал. |
+  | `WS_READ_TIMEOUT` | Клиент не отвечает pong. |
+  | `WS_RATE_LIMITED` | Слишком много подписок/сообщений. |
+
+  ## Отправка сообщений клиентом
+
+  ```json
+  { "op": "subscribe", "channels": ["user.3fa85f64-5717-4562-b3fc-2c963f66afa6", "club.admin.4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f"] }
+  ```
+
+  Клиент может отправлять `subscribe` / `unsubscribe` / `resume` / `pong`. Прочие `op` от клиента игнорируются.
+
+channels:
+  user.{userId}:
+    description: |
+      Канал игрока. Сервер доставляет события по всем клубам и броням, где пользователь —
+      участник (владелец брони или добавленный участник). `{userId}` — UUID пользователя.
+
+      Право на подписку: аутентифицированный пользователь, чей `id` совпадает с `{userId}`.
+    events:
+      - reservation.created.v1
+      - reservation.updated.v1
+      - reservation.confirmed.v1
+      - reservation.checked_in.v1
+      - reservation.completed.v1
+      - reservation.cancelled.v1
+      - reservation.expired.v1
+      - reservation.no_show.v1
+      - reservation.moved.v1
+      - reservation.extended.v1
+      - extension.requested.v1
+      - extension.approved.v1
+      - extension.rejected.v1
+    allowedOps:
+      - subscribe
+      - unsubscribe
+      - resume
+      - pong
+
+  club.admin.{clubId}:
+    description: |
+      Канал персонала и владельцев клуба. Сервер доставляет события по всем броням клуба
+      (включая созданные игроками) и по запросам на продление. `{clubId}` — UUID клуба.
+
+      Право на подписку: CLUB_ADMIN/OWNER с membership в клубе, либо ORG_OWNER организации,
+      которой принадлежит клуб.
+    events:
+      - reservation.created.v1
+      - reservation.updated.v1
+      - reservation.confirmed.v1
+      - reservation.checked_in.v1
+      - reservation.completed.v1
+      - reservation.cancelled.v1
+      - reservation.expired.v1
+      - reservation.no_show.v1
+      - reservation.moved.v1
+      - reservation.extended.v1
+      - extension.requested.v1
+      - extension.approved.v1
+      - extension.rejected.v1
+    allowedOps:
+      - subscribe
+      - unsubscribe
+      - resume
+      - pong
+
+events:
+  reservation.created.v1:
+    description: Бронь создана. Публикуется после COMMIT транзакции создания.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      resourceIds:
+        type: array
+        items:
+          type: string
+          format: uuid
+        description: Выделенные ресурсы (компьютеры и/или VIP-комната).
+      startAt:
+        type: string
+        format: date-time
+      endAt:
+        type: string
+        format: date-time
+
+  reservation.updated.v1:
+    description: Бронь изменена (изменение ресурсов, времени, участников, заметок) без смены статуса.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      changedFields:
+        type: array
+        items:
+          type: string
+        example:
+          - allocations
+          - participants
+          - notes
+
+  reservation.confirmed.v1:
+    description: Бронь подтверждена (принята оплата/депозит) либо перешла из PENDING.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      previousStatus:
+        $ref: '../schemas/ReservationStatus.yaml'
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+
+  reservation.checked_in.v1:
+    description: Администратор подтвердил приход игрока (CONFIRMED → CHECKED_IN).
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      checkedInAt:
+        type: string
+        format: date-time
+
+  reservation.completed.v1:
+    description: Бронь завершена (естественно или администратором досрочно).
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      completedAt:
+        type: string
+        format: date-time
+
+  reservation.cancelled.v1:
+    description: Бронь отменена игроком до начала либо системой (при недоступности ресурса).
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      cancelledAt:
+        type: string
+        format: date-time
+      reason:
+        type: [string, 'null']
+        description: Причина отмены (code или свободный текст).
+
+  reservation.expired.v1:
+    description: Бронь истекла (hold timeout в PENDING либо административное EXPIRED). Интервал освобождается.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      expiredAt:
+        type: string
+        format: date-time
+
+  reservation.no_show.v1:
+    description: Игрок не явился в течение grace-периода (10 минут после начала). Интервал освобождается.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      noShowAt:
+        type: string
+        format: date-time
+
+  reservation.moved.v1:
+    description: Бронь перемещена на другие ресурсы/время администратором.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      fromResourceIds:
+        type: array
+        items:
+          type: string
+          format: uuid
+      toResourceIds:
+        type: array
+        items:
+          type: string
+          format: uuid
+
+  reservation.extended.v1:
+    description: Продление утверждено, бронь получила новое время окончания.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ReservationStatus.yaml'
+      version:
+        type: integer
+      oldEndAt:
+        type: string
+        format: date-time
+      newEndAt:
+        type: string
+        format: date-time
+      extensionRequestId:
+        type: string
+        format: uuid
+
+  extension.requested.v1:
+    description: Игрок запросил продление. Публикуется игроку и персоналу клуба.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      extensionRequestId:
+        type: string
+        format: uuid
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      requestedEndAt:
+        type: string
+        format: date-time
+      expiresAt:
+        type: string
+        format: date-time
+
+  extension.approved.v1:
+    description: Администратор утвердил продление. Событие `reservation.extended.v1` публикуется в той же транзакции.
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      extensionRequestId:
+        type: string
+        format: uuid
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      newEndAt:
+        type: string
+        format: date-time
+
+  extension.rejected.v1:
+    description: Администратор отклонил продление либо запрос истек (EXPIRED).
+    channel: user.{userId} + club.admin.{clubId}
+    data:
+      extensionRequestId:
+        type: string
+        format: uuid
+      reservationId:
+        type: string
+        format: uuid
+      clubId:
+        type: string
+        format: uuid
+      status:
+        $ref: '../schemas/ExtensionRequestStatus.yaml'
+      reason:
+        type: [string, 'null']
+        description: Комментарий администратора (для REJECTED).

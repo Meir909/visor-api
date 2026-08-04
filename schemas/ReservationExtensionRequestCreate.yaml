@@ -1,0 +1,21 @@
+type: object
+description: |
+  Запрос на продление брони.
+
+  Правила:
+  - `requestedEndAt` строго позже текущего `endAt`.
+  - Суммарная длительность (startAt → requestedEndAt) не превышает 10 часов.
+  - Бронь должна быть в статусе `CHECKED_IN` или `ACTIVE` → иначе `422 EXTENSION_NOT_ALLOWED`.
+  - На новый интервал не должно быть пересечений с другими активными бронями.
+  - Решение принимает администратор; запрос не меняет бронь до утверждения.
+required:
+  - requestedEndAt
+properties:
+  requestedEndAt:
+    type: string
+    format: date-time
+    description: Новое желаемое окончание брони.
+  reason:
+    type: [string, 'null']
+    maxLength: 500
+    description: Причина продления.

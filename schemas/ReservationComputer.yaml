@@ -1,0 +1,37 @@
+type: object
+description: Сведения о компьютере в составе брони.
+required:
+  - computerId
+  - number
+  - displayName
+properties:
+  computerId:
+    type: string
+    format: uuid
+    description: Идентификатор компьютера.
+  number:
+    type: integer
+    minimum: 1
+    description: Номер компьютера в клубе.
+  displayName:
+    type: string
+    description: Отображаемое имя.
+  gpu:
+    type: [string, 'null']
+    maxLength: 160
+    description: Видеокарта.
+  cpu:
+    type: [string, 'null']
+    maxLength: 160
+    description: Процессор.
+  ramGb:
+    type: [integer, 'null']
+    minimum: 1
+    description: Оперативная память, ГБ.
+  monitor:
+    type: [string, 'null']
+    maxLength: 160
+    description: Монитор.
+  state:
+    $ref: './ProviderResourceState.yaml'
+    description: Последняя известная проекция состояния от Provider.

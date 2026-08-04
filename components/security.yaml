@@ -1,0 +1,11 @@
+bearerAuth:
+  type: http
+  scheme: bearer
+  bearerFormat: JWT
+  description: |
+    Короткоживущий JWT access token (10–15 минут).
+
+    Заголовок: `Authorization: Bearer <token>`.
+
+    Refresh token хранится в HttpOnly Secure cookie и обновляется через `POST /api/v1/auth/refresh` (модуль Auth).
+    Члены организации получают membership и scope клуба из авторизованного контекста на сервере.

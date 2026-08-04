@@ -1,0 +1,66 @@
+type: object
+description: Краткое представление бронирования для списков и очередей.
+required:
+  - id
+  - reservationNumber
+  - clubId
+  - playerUserId
+  - status
+  - startAt
+  - endAt
+  - totalMinor
+  - currency
+  - version
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор бронирования.
+  reservationNumber:
+    type: string
+    description: Номер брони.
+    example: VR-20260804-00042
+  clubId:
+    type: string
+    format: uuid
+  clubName:
+    type: [string, 'null']
+    description: Название клуба.
+  playerUserId:
+    type: string
+    format: uuid
+  playerDisplayName:
+    type: [string, 'null']
+    description: Имя игрока (для административных списков).
+  status:
+    $ref: './ReservationStatus.yaml'
+  startAt:
+    type: string
+    format: date-time
+  endAt:
+    type: string
+    format: date-time
+  resourceCodes:
+    type: array
+    description: Коды выделенных ресурсов для краткого отображения.
+    items:
+      type: string
+    example:
+      - PC-12
+      - PC-13
+  totalMinor:
+    type: string
+    description: Итоговая сумма в minor units (строка).
+    pattern: '^-?\d+$'
+    example: '600000'
+  currency:
+    type: string
+    description: ISO 4217.
+    example: KZT
+  version:
+    type: integer
+    description: Версия агрегата.
+  createdAt:
+    type: string
+    format: date-time

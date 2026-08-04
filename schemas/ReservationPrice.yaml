@@ -1,0 +1,66 @@
+type: object
+description: |
+  Финансовый снимок бронирования. Все суммы — целые числа в минимальных единицах валюты, строкой.
+  Историческая цена не пересчитывается при изменении тарифов.
+required:
+  - subtotalMinor
+  - discountMinor
+  - totalMinor
+  - currency
+properties:
+  subtotalMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Сумма до скидок.
+    example: '600000'
+  discountMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Суммарная скидка (неотрицательная).
+    example: '60000'
+  totalMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Итоговая сумма (subtotal - discount).
+    example: '540000'
+  depositMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Требуемый/внесённый депозит.
+    example: '120000'
+  currency:
+    type: string
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    description: ISO 4217.
+    example: KZT
+  components:
+    type: array
+    description: Объяснимая структура цены.
+    items:
+      type: object
+      required:
+        - componentType
+        - description
+        - amountMinor
+      properties:
+        componentType:
+          type: string
+          enum:
+            - BASE
+            - OVERRIDE
+            - SURCHARGE
+            - DISCOUNT
+            - ROUNDING
+        description:
+          type: string
+          maxLength: 240
+          description: Замороженное описание строки.
+        quantity:
+          type: number
+          description: Количество (часы/единицы).
+        amountMinor:
+          type: string
+          pattern: '^-?\d+$'
+          description: Сумма строки (скидки — отрицательные).

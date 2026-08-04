@@ -1,0 +1,7 @@
+type: string
+description: Статус учётной записи пользователя.
+enum:
+  - ACTIVE
+  - BLOCKED
+  - DEACTIVATED
+example: ACTIVE

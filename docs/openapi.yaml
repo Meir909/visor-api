@@ -1,0 +1,4474 @@
+openapi: 3.1.0
+info:
+  title: Visora API
+  summary: API платформы онлайн-бронирования Visora
+  version: 1.0.0
+  description: |
+    # Visora API
+
+    **Visora** — SaaS-платформа управления онлайн-бронированием и клиентским опытом развлекательных площадок (компьютерные клубы, VR-центры, консольные клубы, киберспортивные арены).
+
+    Visora **не заменяет** GizmoShell и другие внешние системы управления игровыми сессиями:
+
+    - Visora владеет бронированиями, профилями, клубами, расписанием и ценами.
+    - Provider (Gizmo) владеет фактическими игровыми сессиями и состоянием компьютеров.
+    - Frontend **никогда** не обращается к Provider напрямую; всё проходит через Visora API и Provider Interface.
+    - Reservation Service **не знает** о Gizmo; взаимодействие только через Provider Interface.
+
+    ## Версия документа
+
+    В версии `1.0.0` описаны **модули Reservations** (ядро платформы) и **Auth** (аутентификация и сессии). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+
+    ## Конвенции
+
+    ### Базовый URL и версионирование
+    - Все пути начинаются с `/api/v1`.
+    - Версия в URL относится к presentation-контракту.
+    - Breaking changes допускаются только в новой major версии.
+
+    ### Формат ответов
+    Успешный ответ с одним ресурсом:
+
+    ```json
+    {
+      "data": {},
+      "meta": {
+        "requestId": "2cd0f5a8-4b1c-4f8a-9b1c-8d7e6f5a4b3c",
+        "timestamp": "2026-08-04T10:12:30Z"
+      }
+    }
+    ```
+
+    Список:
+
+    ```json
+    {
+      "data": [],
+      "meta": {
+        "page": 1,
+        "pageSize": 20,
+        "total": 120,
+        "hasNextPage": true
+      }
+    }
+    ```
+
+    Ошибка (RFC 9457 Problem Details):
+
+    ```json
+    {
+      "type": "https://docs.visora.kz/problems/reservation-slot-conflict",
+      "title": "Бронирование конфликтует с существующим",
+      "status": 409,
+      "detail": "Выбранный компьютер уже занят в указанный интервал",
+      "instance": "/api/v1/reservations",
+      "code": "RESERVATION_SLOT_CONFLICT",
+      "correlationId": "4b1c9d8e-..."
+    }
+    ```
+
+    Frontend принимает решения по полю `code`, а не парсит `detail`.
+
+    ### Идентификаторы, время и деньги
+    - Все идентификаторы — `UUID` (рекомендуется UUIDv7).
+    - Все временные метки — ISO 8601 / RFC 3339 в UTC (`date-time`).
+    - Деньги передаются **целыми числами в минимальных единицах валюты** (minor units) **строкой**, чтобы не терять точность в JavaScript: `"amountMinor": "300000"`.
+    - Валюта — код ISO 4217 (`KZT`).
+
+    ### Пагинация
+    - `page`, `pageSize` (по умолчанию `1` и `20`, максимум `100`), `total`.
+    - Для больших history-лент допускается курсорная пагинация (`nextCursor`, `hasNextPage`).
+
+    ### Идемпотентность
+    - Создание брони принимает обязательный заголовок `Idempotency-Key` (UUID).
+    - Одинаковый ключ + одинаковый payload → возвращается сохранённый результат.
+    - Одинаковый ключ + другой payload → `409 IDEMPOTENCY_KEY_REUSED`.
+
+    ### Оптимистичная блокировка
+    - Агрегат брони содержит `version`.
+    - Административные изменения передают `If-Match` с текущей версией; при расхождении — `409 VERSION_CONFLICT`.
+
+    ### Аутентификация
+    - Access token: заголовок `Authorization: Bearer <JWT>` (короткоживущий, 10–15 минут).
+    - Refresh token: HttpOnly Secure cookie; обновление — `POST /api/v1/auth/refresh` (модуль Auth).
+    - Организация и scope определяются сервером из авторизованного контекста, а не из тела запроса.
+
+    ### Коды состояния
+    | HTTP | Применение |
+    |---|---|
+    | 200 | Успешный query/command |
+    | 201 | Ресурс создан |
+    | 204 | Успех без тела |
+    | 400 | Некорректный запрос |
+    | 401 | Требуется аутентификация |
+    | 403 | Аутентифицирован, но доступ запрещён |
+    | 404 | Ресурс не найден или скрыт scope'ом |
+    | 409 | Конфликт состояния / конкуренция |
+    | 422 | Синтаксис корректен, нарушено бизнес-правило |
+    | 429 | Превышен rate limit |
+    | 503 | Временная недоступность зависимости |
+
+    ### WebSocket
+    REST остаётся authoritative API. WebSocket доставляет уведомления об изменениях. Справочник каналов и событий модуля Reservations: `paths/websocket.yaml`.
+  contact:
+    name: Visora Platform
+    url: https://visora.kz
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: /api/v1
+    description: Базовый путь API v1
+security:
+  - bearerAuth: []
+tags:
+  - name: reservations
+    description: |-
+      # Бронирования (Player)
+
+      Endpoints игрока: создание, список, детали, история, таймлайн, статус, участники, отмена, продление, проверка доступности и валидация.
+
+      ## Бизнес-правила
+
+      - Бронь может содержать **один компьютер**, **несколько компьютеров** или **одну VIP-комнату**. Смешивать VIP-комнату и компьютеры в одной брони запрещено.
+      - Минимальная длительность конфигурируема клубом; максимальная — **10 часов**.
+      - Бронь создаётся не позднее чем за **24 часа** до начала: горизонт бронирования — максимум сутки вперёд, бронировать за 2–3 часа до прихода можно.
+      - Если игрок не прибыл в течение **10 минут** после начала, бронь переходит в `NO_SHOW`, интервал освобождается.
+      - Бронь может быть продлена позже; **продление утверждает администратор**.
+      - Игрок может отменить бронь **до начала** (cutoff обычно за 3 часа до старта, конфигурируемо клубом).
+      - Брони не могут пересекаться; финальную защиту от пересечений обеспечивает PostgreSQL exclusion constraint.
+
+      ## Диаграмма переходов состояний
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> DRAFT
+          DRAFT --> PENDING: submit
+          DRAFT --> CANCELLED: user cancel
+          PENDING --> CONFIRMED: payment/deposit accepted
+          PENDING --> REJECTED: admin reject
+          PENDING --> EXPIRED: hold timeout
+          PENDING --> CANCELLED: user cancel
+          CONFIRMED --> CHECKED_IN: admin confirm arrival
+          CONFIRMED --> NO_SHOW: no arrival (grace 10 min)
+          CONFIRMED --> CANCELLED: allowed cancellation
+          CONFIRMED --> EXPIRED: admin expire
+          CHECKED_IN --> ACTIVE: session started
+          ACTIVE --> COMPLETED: end reached
+          CHECKED_IN --> COMPLETED: admin complete early
+          COMPLETED --> [*]
+          CANCELLED --> [*]
+          REJECTED --> [*]
+          EXPIRED --> [*]
+          NO_SHOW --> [*]
+      ```
+
+      ## Последовательность создания брони
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant P as Player (Next.js)
+          participant API as Visora API
+          participant SVC as Reservation Service
+          participant C as Computers
+          participant PROV as Provider Interface
+          participant DB as PostgreSQL
+          participant WS as WebSocket
+
+          P->>API: POST /api/v1/reservations (Idempotency-Key)
+          API->>SVC: CreateReservationCommand
+          SVC->>C: resolve resources
+          C->>PROV: get resource states
+          PROV-->>C: canonical states
+          SVC->>SVC: validate business rules
+          SVC->>DB: BEGIN → check overlap → INSERT + outbox → COMMIT
+          SVC-->>API: ReservationDetails
+          API-->>P: 201 Created
+          API-->>WS: reservation.created.v1 → user.{id}, club.admin.{clubId}
+      ```
+
+      ## Жизненный цикл брони
+
+      ```mermaid
+      flowchart LR
+          A[DRAFT] --> B[PENDING]
+          B --> C[CONFIRMED]
+          C --> D[CHECKED_IN]
+          D --> E[ACTIVE]
+          E --> F[COMPLETED]
+          B --> G[REJECTED]
+          B --> H[EXPIRED]
+          C --> I[NO_SHOW]
+          C --> J[CANCELLED]
+      ```
+
+      ## WebSocket-события модуля
+
+      Каналы `user.{userId}` и `club.admin.{clubId}`:
+
+      | Событие | Смысл |
+      |---|---|
+      | `reservation.created.v1` | Создано |
+      | `reservation.confirmed.v1` | Подтверждено |
+      | `reservation.checked_in.v1` | Отмечен приход |
+      | `reservation.completed.v1` | Завершено |
+      | `reservation.cancelled.v1` | Отменено |
+      | `reservation.expired.v1` | Истекло |
+      | `reservation.no_show.v1` | Неявка |
+      | `reservation.moved.v1` | Перемещено |
+      | `reservation.extended.v1` | Продлено |
+      | `reservation.updated.v1` | Обновлено |
+      | `extension.requested.v1` | Запрошено продление |
+      | `extension.approved.v1` | Продление утверждено |
+      | `extension.rejected.v1` | Продление отклонено |
+
+      ## Роли и разрешения
+
+      - **PLAYER** — только свои брони: `reservation.read.self`, `reservation.create.self`, `reservation.cancel.self`, `reservation.extend.self`.
+      - **CLUB_ADMIN** — операции клуба: `reservation.read.club`, `reservation.check_in.club`, `reservation.move.club`, `reservation.extension.approve.club`.
+      - **ORG_OWNER** — все клубы организации, включая бронирования и очередь.
+  - name: admin-reservations
+    description: |-
+      # Бронирования (Admin)
+
+      Endpoints для персонала клуба и владельцев: очередь броней, подтверждение прихода, отклонение, завершение, истечение, перемещение, ручная смена статуса и утверждение продлений.
+
+      - Разрешения определяются membership-ролью и scope клуба.
+      - Каждый запрос проверяет принадлежность клуба и ресурса организации.
+      - Все административные действия аудируются.
+      - Мутации принимают `If-Match` с текущей `version` брони.
+
+      ## Последовательность подтверждения прихода
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant A as Admin (Next.js)
+          participant API as Visora API
+          participant SVC as Reservation Service
+          participant DB as PostgreSQL
+          participant PROV as Provider Interface
+
+          A->>API: POST /api/v1/admin/reservations/{id}/check-in
+          API->>SVC: ConfirmArrivalCommand
+          SVC->>DB: lock reservation row
+          SVC->>SVC: CONFIRMED → CHECKED_IN
+          SVC->>DB: save + outbox
+          SVC->>PROV: startSession (async, вне транзакции)
+          SVC-->>API: ReservationDetails
+          API-->>A: 200 OK
+      ```
+  - name: auth
+    description: |-
+      # Аутентификация
+
+      Идентификация пользователя по номеру телефона (E.164) через одноразовый OTP-код. Успешная проверка создаёт server-side session и пару токенов.
+
+      **Модель identity:**
+      - `accessToken` — короткоживущий JWT (10–15 минут), claim-ы: `sub`, `sid`, `iat`, `exp`, `iss`, `aud`.
+      - `refreshToken` — случайный opaque токен; на сервере хранится только hash; срок 30 дней; **rotation** при каждом refresh.
+      - `session` — запись с user ID, device metadata и состоянием отзыва.
+
+      **Доставка refresh token:**
+      - Web: HttpOnly, Secure, SameSite=Lax cookie на `Path=/api/v1/auth`.
+      - Mobile: в теле ответа, хранение в OS secure storage.
+
+      **OTP-безопасность:**
+      - Код действует 5 минут; challenge одноразовый.
+      - Максимум 5 попыток на challenge; resend — не чаще 60 секунд.
+      - Лимиты на телефон, IP и device fingerprint.
+      - OTP хранится как HMAC/hash, не plaintext.
+      - Ответ не раскрывает, существует ли пользователь.
+      - Статический код разрешён только в non-production и явно маркируется.
+
+      **Rotation и replay:**
+      - Каждый refresh атомарно помечает старый токен использованным и выдаёт новый.
+      - Повторное использование старого токена → вся token family отзывается и создаётся security event.
+      - `BLOCKED`/`DEACTIVATED` пользователи не получают новых токенов.
+
+      ## Последовательность входа по OTP
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant C as Client
+          participant A as Auth API
+          participant RL as Rate Limiter
+          participant OTP as OTP Store
+          participant SMS as SMS Adapter
+          participant U as Users
+
+          C->>A: POST /api/v1/auth/otp/request {phone}
+          A->>RL: check phone + IP + device limits
+          RL-->>A: allowed
+          A->>OTP: create challenge + hashed code + expiry
+          A->>SMS: send code
+          A-->>C: challengeId + retryAfter
+          C->>A: POST /api/v1/auth/otp/verify
+          A->>OTP: atomic verify and consume
+          OTP-->>A: verified
+          A->>U: findOrCreateUser(phone)
+          U-->>A: user
+          A-->>C: access token + refresh session
+      ```
+
+      ## Ротация refresh token
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant C as Client
+          participant A as Auth API
+          participant DB as refresh_tokens
+
+          C->>A: POST /api/v1/auth/refresh
+          A->>DB: find token_hash + family
+          alt replay (токен уже использован)
+              A->>DB: revoke всю family
+              A-->>C: 409 REFRESH_TOKEN_REPLAY
+          else valid
+              A->>DB: atomically mark used + issue new
+              A-->>C: new access + refresh (Set-Cookie)
+          end
+      ```
+
+      ## Публичные и защищённые endpoints
+
+      | Endpoint | Доступ |
+      |---|---|
+      | `POST /auth/otp/request`, `POST /auth/otp/verify`, `POST /auth/refresh` | Публичные (`security: []`) |
+      | `POST /auth/logout` | По refresh token (cookie или тело) |
+      | `POST /auth/logout-all`, `GET /auth/sessions`, `POST /auth/sessions/{id}/revoke`, `GET /auth/me` | `bearerAuth` |
+
+      ## Роли и разрешения
+
+      - **ANY_AUTHENTICATED** — `auth.session.read.self`, `auth.session.revoke.self`, `auth.logout.self`.
+      - **PLAYER** — `profile.read.self`.
+paths:
+  /reservations:
+    post:
+      tags:
+        - reservations
+      summary: Создать бронирование
+      operationId: createReservation
+      description: |-
+        Создаёт новое бронирование в клубе.
+
+        **Разрешения:** `reservation.create.self` (PLAYER) / `reservation.create.club` (CLUB_ADMIN, ORG_OWNER).
+
+        **Идемпотентность:** обязательный заголовок `Idempotency-Key`.
+
+        **Бизнес-правила:**
+        - Ресурсы: один VIP room либо от 1 до 10 компьютеров; смешивать типы запрещено.
+        - Длительность: от минимальной (конфигурируемой клубом) до 10 часов.
+        - Начало — не позднее чем через 24 часа от текущего момента (горизонт бронирования); бронь можно создать за 2–3 часа до начала.
+        - Интервал должен попадать в рабочие часы клуба и не пересекаться с закрытиями.
+        - Проекция состояния ресурса от Provider должна быть свежей (policy доступности клуба).
+        - Финальная защита от пересечений — PostgreSQL exclusion constraint.
+
+        **Валидация:** `clubId`, `resourceIds[*]` — UUID; `startAt`/`endAt` — ISO 8601; `endAt > startAt`; `participantCount >= 1`; `notes` ≤ 1000 символов.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.create.self
+        - reservation.create.club
+      x-business-rules:
+        - Максимум 10 часов.
+        - Начало — максимум через 24 часа от текущего момента (нельзя бронировать дальше суток вперёд).
+        - Один VIP room либо компьютеры (без смешивания).
+        - Запрет пересечений с активными бронями.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationCreateRequest'
+            examples:
+              createReservation:
+                $ref: '#/components/examples/CreateReservationRequest'
+      responses:
+        '201':
+          description: Бронирование создано.
+          headers:
+            Location:
+              description: URL созданного бронирования.
+              schema:
+                type: string
+                format: uri-reference
+              example: /api/v1/reservations/2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+              examples:
+                createReservation:
+                  $ref: '#/components/examples/CreateReservationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags:
+        - reservations
+      summary: Список бронирований
+      operationId: listReservations
+      description: |-
+        Возвращает список бронирований с фильтрацией, поиском и пагинацией.
+
+        **Доступ:** PLAYER видит только свои брони; CLUB_ADMIN/ORG_OWNER видят брони в scope клуба/организации.
+
+        **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+
+        **Фильтры:** `status`, `clubId`, `playerId` (только staff), `resourceId`, `resourceType`, `from`/`to`, `q` (поиск по номеру, имени/телефону игрока).
+        **Сортировка:** `sort=startAt:desc` (поля: `startAt`, `endAt`, `createdAt`, `totalMinor`).
+        **Пагинация:** `page`, `pageSize`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/PlayerId'
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/ResourceTypeQuery'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Список бронирований.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /reservations/current:
+    get:
+      tags:
+        - reservations
+      summary: Текущее бронирование игрока
+      operationId: getCurrentReservation
+      description: |-
+        Возвращает текущее активное бронирование вызывающего игрока (статусы `CHECKED_IN` или `ACTIVE`).
+        Если активной брони нет — `data: null` (не является ошибкой).
+
+        **Разрешение:** `reservation.read.self`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Текущее бронирование (может быть null).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    anyOf:
+                      - $ref: '#/components/schemas/ReservationDetails'
+                      - type: 'null'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /reservations/validate:
+    post:
+      tags:
+        - reservations
+      summary: Валидация бронирования
+      operationId: validateReservation
+      description: |-
+        Проверяет возможность создания брони без фактического создания.
+        Выполняет те же бизнес-проверки и проверку пересечений, возвращает конфликты и предупреждения.
+
+        **Разрешение:** `reservation.create.self`.
+
+        **Примечание:** предварительная проверка улучшает UX, но финальную защиту обеспечивает PostgreSQL exclusion constraint.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.create.self
+      x-business-rules:
+        - Не создаёт бронь, только проверяет.
+        - Проверяет пересечения, часы работы, длительность и горизонт брони.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationCreateRequest'
+            examples:
+              createReservation:
+                $ref: '#/components/examples/CreateReservationRequest'
+      responses:
+        '200':
+          description: Результат валидации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationValidation'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /reservations/availability:
+    get:
+      tags:
+        - reservations
+      summary: Проверить доступность
+      operationId: checkReservationAvailability
+      description: |-
+        Возвращает доступность ресурсов клуба в интервале `from`–`to`.
+        Сливает: расписание и закрытия клуба, пересечения с активными бронями и (при `includeState=true`) проекцию состояния Provider с freshness.
+
+        **Разрешение:** `reservation.read.self`.
+
+        **Параметры:** `clubId` (обязателен), `from`, `to` (ISO 8601, интервал не более 24 часов), `resourceType`, `resourceId`, `zoneIds`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+      parameters:
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/ResourceTypeQuery'
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/ZoneIds'
+        - $ref: '#/components/parameters/IncludeState'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Доступность ресурсов.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationAvailability'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                availability:
+                  $ref: '#/components/examples/AvailabilityCheckExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /reservations/{reservationId}:
+    get:
+      tags:
+        - reservations
+      summary: Детали бронирования
+      operationId: getReservation
+      description: |-
+        Полные детали бронирования: выделенные ресурсы, участники, история продлений и доступные действия.
+
+        **Разрешения:** `reservation.read.self` (только свои) / `reservation.read.club` (staff).
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Детали бронирования.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                details:
+                  $ref: '#/components/examples/ReservationDetailsExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - admin-reservations
+      summary: Обновить бронирование
+      operationId: adminUpdateReservation
+      description: |-
+        Обновление бронирования администратором (заметки, число участников, перенос времени).
+
+        **Требуется `If-Match`** с текущей `version`; при расхождении — `409 VERSION_CONFLICT`.
+
+        **Правила:** перенос времени повторно проверяет пересечения и рабочие часы; при переносе времени обязателен `reason`.
+
+        **Разрешение:** `reservation.update.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.update.club
+      x-business-rules:
+        - Перенос времени повторно проверяет пересечения.
+        - Изменение времени аудируется.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationUpdateRequest'
+      responses:
+        '200':
+          description: Обновлённое бронирование.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /reservations/{reservationId}/history:
+    get:
+      tags:
+        - reservations
+      summary: История бронирования
+      operationId: getReservationHistory
+      description: |-
+        Полная история смены статусов бронирования (immutable, append-only).
+
+        **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+      responses:
+        '200':
+          description: История смены статусов.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationHistory'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                history:
+                  $ref: '#/components/examples/ReservationHistoryExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /reservations/{reservationId}/timeline:
+    get:
+      tags:
+        - reservations
+      summary: Хронология бронирования
+      operationId: getReservationTimeline
+      description: |-
+        Хронология всех событий брони: статусы, продления, перемещения, обновления.
+        Отличается от истории тем, что включает события, не меняющие статус.
+
+        **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+      responses:
+        '200':
+          description: Хронология событий.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationTimeline'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /reservations/{reservationId}/status:
+    get:
+      tags:
+        - reservations
+      summary: Статус бронирования
+      operationId: getReservationStatus
+      description: |-
+        Текущий статус, версия и доступные действия. Лёгкий способ отслеживать изменение брони.
+
+        **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+      responses:
+        '200':
+          description: Текущий статус.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationStatusView'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /reservations/{reservationId}/participants:
+    get:
+      tags:
+        - reservations
+      summary: Участники бронирования
+      operationId: getReservationParticipants
+      description: |-
+        Список участников бронирования.
+
+        **Разрешения:** `reservation.read.self` / `reservation.read.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+      responses:
+        '200':
+          description: Участники брони.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - participants
+                    properties:
+                      participants:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ReservationParticipant'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /reservations/{reservationId}/cancel:
+    post:
+      tags:
+        - reservations
+      summary: Отменить бронирование
+      operationId: cancelReservation
+      description: |-
+        Отмена бронирования.
+
+        **Правила:**
+        - Игрок может отменить до начала; отмена позже cutoff (обычно за 3 часа до старта) запрещена → `422 CANCELLATION_NOT_ALLOWED`.
+        - Администратор может отменить до завершения; `reason` обязателен.
+        - Отмена активной (`CHECKED_IN`/`ACTIVE`) брони → `409 RESERVATION_ALREADY_ACTIVE` (используйте `complete`).
+        - Слот(ы) освобождаются; депозит возвращается по политике клуба.
+
+        **Разрешения:** `reservation.cancel.self` / `reservation.cancel.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.cancel.self
+        - reservation.cancel.club
+      x-business-rules:
+        - Отмена игроком не позднее cutoff (по умолчанию за 3 часа).
+        - Освобождение слота после отмены.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/IdempotencyKeyOptional'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationCancelRequest'
+            examples:
+              cancel:
+                value:
+                  reason: Передумал
+                  notifyPlayer: true
+      responses:
+        '200':
+          description: Отменённое бронирование.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+              examples:
+                cancelled:
+                  $ref: '#/components/examples/CancellationExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /reservations/{reservationId}/extensions:
+    post:
+      tags:
+        - reservations
+      summary: Запросить продление брони
+      operationId: requestReservationExtension
+      description: |-
+        Создаёт запрос на продление брони. Запрос не меняет бронь до утверждения администратором.
+
+        **Правила:**
+        - `requestedEndAt` строго позже текущего `endAt`.
+        - Суммарная длительность не более 10 часов.
+        - Бронь должна быть в статусе `CHECKED_IN` или `ACTIVE` → иначе `422 EXTENSION_NOT_ALLOWED`.
+        - На новый интервал не должно быть пересечений → `409 RESERVATION_SLOT_CONFLICT`.
+
+        **Разрешение:** `reservation.extend.self`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.extend.self
+      x-business-rules:
+        - Продление утверждает администратор.
+        - Запрос не меняет бронь до решения.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationExtensionRequestCreate'
+            examples:
+              extend:
+                value:
+                  requestedEndAt: '2026-08-04T19:00:00Z'
+                  reason: Хочу поиграть ещё
+      responses:
+        '201':
+          description: Запрос на продление создан.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationExtensionRequest'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                extensionRequest:
+                  $ref: '#/components/examples/ExtensionRequestExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /me/reservations:
+    get:
+      tags:
+        - reservations
+      summary: Мои бронирования
+      operationId: getMyReservations
+      description: |-
+        Список бронирований текущего игрока (все статусы) с фильтрами и пагинацией.
+
+        **Разрешение:** `reservation.read.self`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+      parameters:
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Список бронирований игрока.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /me/reservations/upcoming:
+    get:
+      tags:
+        - reservations
+      summary: Предстоящие бронирования
+      operationId: getMyUpcomingReservations
+      description: |-
+        Предстоящие бронирования игрока: статусы `PENDING` и `CONFIRMED`, `startAt` в будущем.
+
+        **Разрешение:** `reservation.read.self`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Предстоящие бронирования.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /me/reservations/active:
+    get:
+      tags:
+        - reservations
+      summary: Активные бронирования
+      operationId: getMyActiveReservations
+      description: |-
+        Активные бронирования игрока: статусы `CHECKED_IN` и `ACTIVE`.
+
+        **Разрешение:** `reservation.read.self`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Активные бронирования.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /me/reservations/expired:
+    get:
+      tags:
+        - reservations
+      summary: Завершённые/истёкшие бронирования
+      operationId: getMyExpiredReservations
+      description: |-
+        Завершённые и истёкшие бронирования игрока: статусы `COMPLETED`, `EXPIRED`, `NO_SHOW`, `CANCELLED`, `REJECTED`.
+
+        **Разрешение:** `reservation.read.self`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.self
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Завершённые/истёкшие бронирования.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/queue:
+    get:
+      tags:
+        - admin-reservations
+      summary: Очередь бронирований
+      operationId: getAdminReservationQueue
+      description: |-
+        Очередь броней для персонала клуба на указанную дату (по умолчанию — сегодня, локальная дата клуба).
+        Сортировка по `startAt`; активные статусы (`CONFIRMED`, `CHECKED_IN`, `ACTIVE`) приоритетны.
+        `q` — поиск по номеру брони, имени или телефону игрока.
+
+        **Разрешение:** `reservation.read.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.read.club
+      parameters:
+        - $ref: '#/components/parameters/ClubIdQuery'
+        - $ref: '#/components/parameters/AdminDate'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Очередь бронирований.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/{reservationId}/check-in:
+    post:
+      tags:
+        - admin-reservations
+      summary: Подтвердить приход
+      operationId: adminConfirmArrival
+      description: |-
+        Подтверждение прибытия игрока: `CONFIRMED → CHECKED_IN`.
+        Устанавливает `checkedInAt`, `checkedInByUserId`.
+        Опционально запускает старт игровой сессии через Provider Interface **асинхронно, вне транзакции**.
+
+        **Ошибки:** `409 PLAYER_ALREADY_CHECKED_IN`, `409 RESERVATION_ALREADY_ACTIVE`, `422 INVALID_STATE_TRANSITION`.
+
+        **Разрешение:** `reservation.check_in.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.check_in.club
+      x-business-rules:
+        - Только из статуса CONFIRMED.
+        - Provider-команда старта сессии выполняется после коммита.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Бронирование после подтверждения прихода.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/{reservationId}/reject:
+    post:
+      tags:
+        - admin-reservations
+      summary: Отклонить бронирование
+      operationId: adminRejectReservation
+      description: |-
+        Отклонение бронирования: `PENDING → REJECTED`. `reason` обязателен.
+        Слот освобождается.
+
+        **Разрешение:** `reservation.reject.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.reject.club
+      x-business-rules:
+        - Только из статуса PENDING.
+        - Отклонение аудируется.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: Причина отклонения.
+                notifyPlayer:
+                  type: boolean
+                  default: true
+                  description: Уведомить игрока.
+            examples:
+              reject:
+                value:
+                  reason: Нет свободных мест по техническим причинам
+                  notifyPlayer: true
+      responses:
+        '200':
+          description: Отклонённое бронирование.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/{reservationId}/complete:
+    post:
+      tags:
+        - admin-reservations
+      summary: Завершить бронирование
+      operationId: adminCompleteReservation
+      description: |-
+        Штатное завершение брони: `CHECKED_IN`/`ACTIVE → COMPLETED`.
+        Устанавливает `completedAt`. Ресурсы освобождаются.
+        Опционально отправляет команду завершения сессии в Provider.
+
+        **Разрешение:** `reservation.complete.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.complete.club
+      x-business-rules:
+        - Только из статусов CHECKED_IN или ACTIVE.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Причина (для аудита).
+      responses:
+        '200':
+          description: Завершённое бронирование.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/{reservationId}/expire:
+    post:
+      tags:
+        - admin-reservations
+      summary: Истечь бронирование
+      operationId: adminExpireReservation
+      description: |-
+        Ручной перевод брони в `EXPIRED` (например, hold не подтверждён).
+        Обычно переход в `EXPIRED`/`NO_SHOW` выполняет scheduled-воркер автоматически;
+        этот endpoint — для исключительных случаев. `reason` рекомендуется.
+
+        **Разрешение:** `reservation.expire.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.expire.club
+      x-business-rules:
+        - Только из статусов PENDING или CONFIRMED.
+        - Слот освобождается.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Причина (для аудита).
+      responses:
+        '200':
+          description: Истёкшее бронирование.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/{reservationId}/move:
+    post:
+      tags:
+        - admin-reservations
+      summary: Переместить бронирование
+      operationId: adminMoveReservation
+      description: |-
+        Перемещение игрока на другой ресурс клуба.
+        Создаётся новое выделение (`movedFromAllocationId` указывает на исходное), старое освобождается.
+        Перемещение повторно проверяет пересечения на целевом ресурсе.
+
+        **Ошибки:** `409 RESERVATION_SLOT_CONFLICT` (целевой ресурс занят), `422 INVALID_STATE_TRANSITION`.
+
+        **Разрешение:** `reservation.move.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.move.club
+      x-business-rules:
+        - Целевой ресурс в том же клубе.
+        - Только для статусов CONFIRMED/CHECKED_IN/ACTIVE.
+        - Перемещение аудируется.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - targetResourceId
+              properties:
+                targetResourceId:
+                  type: string
+                  format: uuid
+                  description: Ресурс, на который перемещается игрок.
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Причина перемещения.
+            examples:
+              move:
+                value:
+                  targetResourceId: 6e5f4a3b-2c1d-4e0f-8a9b-0c1d2e3f4a5b
+                  reason: Техническая проблема с компьютером
+      responses:
+        '200':
+          description: Бронирование после перемещения.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/reservations/{reservationId}/status:
+    post:
+      tags:
+        - admin-reservations
+      summary: Изменить статус бронирования
+      operationId: adminChangeReservationStatus
+      description: |-
+        Ручная смена статуса бронирования (исправление/миграция данных).
+        Только допустимые переходы; все переходы аудируются. Требуется `If-Match`.
+
+        **Ошибки:** `422 INVALID_STATE_TRANSITION`, `409 VERSION_CONFLICT`.
+
+        **Разрешение:** `reservation.status.club` (привилегированное).
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.status.club
+      x-business-rules:
+        - Только допустимые переходы state machine.
+        - Изменение статуса аудируется.
+      parameters:
+        - $ref: '#/components/parameters/ReservationId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+                - reason
+              properties:
+                status:
+                  $ref: '#/components/schemas/ReservationStatus'
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: Причина смены статуса (обязательна для аудита).
+      responses:
+        '200':
+          description: Бронирование после смены статуса.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/extensions/{extensionId}/approve:
+    post:
+      tags:
+        - admin-reservations
+      summary: Утвердить продление
+      operationId: adminApproveExtension
+      description: |-
+        Утверждение запроса на продление: `PENDING → APPROVED`.
+        Продлевает `endAt` брони с перепроверкой пересечений; доп. сумма фиксируется как цена-снимок.
+        Отправляет команду продления сессии в Provider (асинхронно).
+
+        **Ошибки:** `422 EXTENSION_NOT_ALLOWED` (бронь в недопустимом статусе или перевышен лимит), `409 RESERVATION_SLOT_CONFLICT`.
+
+        **Разрешение:** `reservation.extension.approve.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.extension.approve.club
+      x-business-rules:
+        - Только для запроса в статусе PENDING.
+        - Суммарная длительность не более 10 часов.
+        - Перепроверка пересечений на новый интервал.
+      parameters:
+        - $ref: '#/components/parameters/ExtensionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                additionalAmountMinor:
+                  type: string
+                  pattern: ^-?\d+$
+                  description: Дополнительная сумма за продление (minor units, строка).
+                currency:
+                  type: string
+                  minLength: 3
+                  maxLength: 3
+                  pattern: ^[A-Z]{3}$
+                  description: ISO 4217 (должна совпадать с валютой брони).
+                note:
+                  type: string
+                  maxLength: 500
+                  description: Комментарий к утверждению.
+      responses:
+        '200':
+          description: Бронирование после продления.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationDetails'
+                  meta:
+                    $ref: '#/components/schemas/ReservationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /admin/extensions/{extensionId}/reject:
+    post:
+      tags:
+        - admin-reservations
+      summary: Отклонить продление
+      operationId: adminRejectExtension
+      description: |-
+        Отклонение запроса на продление: `PENDING → REJECTED`. `reason` обязателен.
+        Бронь не меняется.
+
+        **Разрешение:** `reservation.extension.approve.club`.
+      security:
+        - bearerAuth: []
+      x-permissions:
+        - reservation.extension.approve.club
+      x-business-rules:
+        - Только для запроса в статусе PENDING.
+      parameters:
+        - $ref: '#/components/parameters/ExtensionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: Причина отклонения.
+      responses:
+        '200':
+          description: Отклонённый запрос на продление.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReservationExtensionRequest'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/otp/request:
+    post:
+      tags:
+        - auth
+      summary: Запросить OTP-код
+      operationId: requestOtp
+      description: |-
+        Отправляет одноразовый код (OTP) на номер телефона. Основной login identifier MVP — телефон в формате E.164.
+
+        **Безопасность OTP:**
+        - Код действует **5 минут**, challenge одноразовый.
+        - Максимум **5 попыток** на challenge.
+        - Интервал повторной отправки — **не менее 60 секунд**.
+        - Лимиты на телефон, IP и device fingerprint (`429 OTP_RATE_LIMITED`).
+        - OTP хранится как HMAC/hash, не plaintext.
+        - Ответ **не раскрывает**, существует ли пользователь и активна ли его учётка: даже для BLOCKED/DEACTIVATED возвращается 200 с challengeId, но SMS не отправляется.
+        - Статический код (`devStaticCode`) возвращается только в non-production среде.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpRequest'
+            examples:
+              requestOtp:
+                $ref: '#/components/examples/OtpRequestExample'
+      responses:
+        '200':
+          description: Код отправлен. Поле `retryAfterSeconds` задаёт минимальный интервал до повторного запроса.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OtpChallenge'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                otpChallenge:
+                  $ref: '#/components/examples/OtpChallengeExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/otp/verify:
+    post:
+      tags:
+        - auth
+      summary: Верифицировать OTP-код и войти
+      operationId: verifyOtp
+      description: |-
+        Атомарно проверяет и «потребляет» одноразовый код. При успехе находит или создаёт пользователя (`findOrCreateUser(phone)`) и создаёт server-side session с парой токенов.
+
+        **Токены:**
+        - `accessToken` — JWT 10–15 минут, claim-ы: `sub`, `sid`, `iat`, `exp`, `iss`, `aud`.
+        - `refreshToken` — случайный opaque токен, на сервере хранится только hash; срок 30 дней, rotation при каждом refresh.
+
+        **Доставка refresh token:**
+        - Web: только в `Set-Cookie` (HttpOnly, Secure, SameSite=Lax); в теле `refreshToken` отсутствует.
+        - Mobile: в теле ответа; клиент хранит в OS secure storage.
+
+        **Идемпотентность:** повторный verify с тем же `challengeId` невозможен (challenge одноразовый).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+            examples:
+              verifyOtp:
+                $ref: '#/components/examples/OtpVerifyRequestExample'
+      responses:
+        '200':
+          description: Аутентификация успешна. Для web в заголовках ответа дополнительно устанавливается refresh cookie.
+          headers:
+            Set-Cookie:
+              description: Refresh token cookie (web). HttpOnly, Secure, SameSite=Lax; `refresh_token=<value>; Path=/api/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax`.
+              schema:
+                type: string
+              example: refresh_token=v1.refresh.9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f; Path=/api/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuthTokens'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                verifyOtp:
+                  $ref: '#/components/examples/OtpVerifyResponseExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/refresh:
+    post:
+      tags:
+        - auth
+      summary: Обновить пару токенов
+      operationId: refreshSession
+      description: |-
+        Выполняет ротацию refresh token: старый атомарно помечается использованным и выдаётся новый.
+
+        **Replay protection:**
+        - Повторное использование старого токена считается replay attack → вся token family отзывается (`409 REFRESH_TOKEN_REPLAY`) и создаётся security event.
+        - Срок жизни refresh token — 30 дней; `expires_at > created_at`.
+        - Пользователь с `status = BLOCKED` или `DEACTIVATED` не получает новый токен (`422 USER_BLOCKED` / `USER_DEACTIVATED`).
+
+        **Источник refresh token:** cookie `refresh_token` (web) либо поле `refreshToken` в теле (mobile).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  description: Refresh token для mobile-клиентов. Для web передаётся в cookie и это поле не заполняется.
+        description: Опционально для mobile; для web токен берётся из HttpOnly cookie.
+      responses:
+        '200':
+          description: Новая пара токенов. Refresh cookie (web) обновляется в заголовке `Set-Cookie`.
+          headers:
+            Set-Cookie:
+              description: Обновлённый refresh token cookie (web).
+              schema:
+                type: string
+              example: refresh_token=v1.refresh.0e9f8a7b-6c5d-4e3f-8a2b-1c0d9e8f7a6b; Path=/api/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuthTokens'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                refresh:
+                  $ref: '#/components/examples/OtpVerifyResponseExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /auth/logout:
+    post:
+      tags:
+        - auth
+      summary: Выйти из текущей сессии
+      operationId: logout
+      description: |-
+        Отзывает текущую refresh-сессию. Access token продолжает действовать до истечения TTL (10–15 минут) — это ограничение компенсируется коротким сроком жизни.
+
+        Для web refresh token берётся из cookie; для mobile — из поля `refreshToken` в теле. Операция аудируется.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  description: Refresh token для mobile-клиентов.
+        description: Опционально для mobile; для web токен берётся из HttpOnly cookie.
+      responses:
+        '204':
+          description: Сессия отозвана. Для web сервер также удаляет refresh cookie (`Max-Age=0`).
+          headers:
+            Set-Cookie:
+              description: Очищенная refresh cookie (web).
+              schema:
+                type: string
+              example: refresh_token=; Path=/api/v1/auth; Max-Age=0; HttpOnly; Secure; SameSite=Lax
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/logout-all:
+    post:
+      tags:
+        - auth
+      summary: Выйти со всех устройств
+      operationId: logoutAll
+      description: |
+        Отзывает **все** активные refresh-сессии пользователя, включая текущую. Применяется при компрометации устройства. Создаётся security event.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Все сессии отозваны.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/sessions:
+    get:
+      tags:
+        - auth
+      summary: Список активных сессий
+      operationId: listSessions
+      description: |
+        Возвращает сессии текущего пользователя с пометкой `isCurrent`. Позволяет управлять устройствами из UI.
+
+        Пагинация: `page`, `pageSize` (по умолчанию 1 и 20, максимум 100).
+      parameters:
+        - $ref: '#/components/parameters/SessionStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Список сессий.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthSession'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                sessions:
+                  $ref: '#/components/examples/AuthSessionsExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/sessions/{sessionId}/revoke:
+    post:
+      tags:
+        - auth
+      summary: Отозвать сессию
+      operationId: revokeSession
+      description: |
+        Отзывает конкретную сессию пользователя (например, потерянное устройство). Отзыв собственной текущей сессии допустим.
+
+        Повторный отзыв идемпотентен: сессия в статусе revoked возвращает 204.
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeSessionRequest'
+        description: Опциональная причина для аудита.
+      responses:
+        '204':
+          description: Сессия отозвана.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/me:
+    get:
+      tags:
+        - auth
+      summary: Текущий пользователь
+      operationId: getCurrentUser
+      description: |
+        Возвращает публичный профиль пользователя, аутентифицированного access token'ом.
+
+        При `status = DEACTIVATED` профиль недоступен (`401`/`422 USER_DEACTIVATED`). Профиль и membership не кешируются в токене — API всегда резолвит их из базы/short-lived кеша.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Профиль текущего пользователя.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/User'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                me:
+                  $ref: '#/components/examples/UserExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Короткоживущий JWT access token (10–15 минут).
+
+        Заголовок: `Authorization: Bearer <token>`.
+
+        Refresh token хранится в HttpOnly Secure cookie и обновляется через `POST /api/v1/auth/refresh` (модуль Auth).
+        Члены организации получают membership и scope клуба из авторизованного контекста на сервере.
+  schemas:
+    Money:
+      type: object
+      description: Денежная сумма в минимальных единицах валюты (minor units).
+      required:
+        - amountMinor
+        - currency
+      properties:
+        amountMinor:
+          type: string
+          description: Целое число минимальных единиц валюты, сериализованное строкой (bigint). Без дробной части.
+          pattern: ^-?\d+$
+          example: '300000'
+        currency:
+          type: string
+          description: Код валюты ISO 4217.
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+    ProblemDetails:
+      type: object
+      description: |
+        Структура ошибки, совместимая с RFC 9457 (Problem Details).
+        Frontend принимает решения по полю `code`, а не парсит `detail`.
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: URI документации проблемы.
+          example: https://docs.visora.kz/problems/reservation-slot-conflict
+        title:
+          type: string
+          description: Краткий человекочитаемый заголовок проблемы.
+          example: Бронирование конфликтует с существующим
+        status:
+          type: integer
+          description: HTTP-статус ответа.
+          minimum: 100
+          maximum: 599
+          example: 409
+        detail:
+          type: string
+          description: Детальное описание проблемы.
+        instance:
+          type: string
+          format: uri-reference
+          description: Конкретное вхождение (обычно путь запроса).
+          example: /api/v1/reservations
+        code:
+          type: string
+          description: Машиночитаемый код ошибки (см. схему ErrorCode).
+          $ref: '#/components/schemas/ErrorCode'
+        correlationId:
+          type: string
+          format: uuid
+          description: Идентификатор корреляции для трассировки.
+        errors:
+          type: array
+          description: Детали ошибок валидации по полям.
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                description: Путь к полю (например `resourceIds`).
+              code:
+                type: string
+                description: Код ошибки поля.
+              message:
+                type: string
+                description: Описание ошибки.
+    ErrorCode:
+      type: string
+      description: Машиночитаемый код ошибки. Frontend принимает решения по этому полю.
+      enum:
+        - VALIDATION_ERROR
+        - UNAUTHORIZED
+        - FORBIDDEN
+        - RESERVATION_NOT_FOUND
+        - RESERVATION_SLOT_CONFLICT
+        - COMPUTER_ALREADY_RESERVED
+        - VIP_ROOM_OCCUPIED
+        - RESERVATION_EXPIRED
+        - RESERVATION_ALREADY_ACTIVE
+        - PLAYER_ALREADY_CHECKED_IN
+        - EXTENSION_NOT_ALLOWED
+        - CANCELLATION_NOT_ALLOWED
+        - INVALID_STATE_TRANSITION
+        - VERSION_CONFLICT
+        - IDEMPOTENCY_KEY_REUSED
+        - CLUB_CLOSED
+        - MAXIMUM_DURATION_EXCEEDED
+        - BOOKING_HORIZON_EXCEEDED
+        - RATE_LIMITED
+        - SERVICE_UNAVAILABLE
+        - OTP_INVALID_CODE
+        - OTP_EXPIRED
+        - OTP_ATTEMPTS_EXCEEDED
+        - OTP_RATE_LIMITED
+        - OTP_RESEND_TOO_SOON
+        - INVALID_REFRESH_TOKEN
+        - REFRESH_TOKEN_REPLAY
+        - SESSION_NOT_FOUND
+        - USER_BLOCKED
+        - USER_DEACTIVATED
+    PageMeta:
+      type: object
+      description: Метаданные пагинации для списочных ответов.
+      required:
+        - page
+        - pageSize
+        - total
+      properties:
+        page:
+          type: integer
+          description: Текущая страница (начиная с 1).
+          minimum: 1
+          example: 1
+        pageSize:
+          type: integer
+          description: Размер страницы.
+          minimum: 1
+          maximum: 100
+          example: 20
+        total:
+          type: integer
+          description: Общее количество элементов.
+          minimum: 0
+          example: 120
+        hasNextPage:
+          type: boolean
+          description: Есть ли следующая страница.
+          example: true
+        nextCursor:
+          type:
+            - string
+            - 'null'
+          description: Курсор следующей страницы (если используется курсорная пагинация), иначе null.
+          example: eyJvZmZzZXQiOiA0MH0=
+    RequestMeta:
+      type: object
+      description: Метаданные успешного ответа с одним ресурсом.
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Идентификатор запроса (correlation).
+          example: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+        timestamp:
+          type: string
+          format: date-time
+          description: Время формирования ответа (UTC).
+          example: '2026-08-04T10:12:30Z'
+    ReservationMeta:
+      type: object
+      description: Метаданные ответа для мутаций бронирования (создание, действия). Содержит актуальную версию агрегата для If-Match.
+      required:
+        - reservationId
+        - version
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Идентификатор запроса (correlation).
+        timestamp:
+          type: string
+          format: date-time
+          description: Время формирования ответа (UTC).
+        reservationId:
+          type: string
+          format: uuid
+          description: Идентификатор бронирования.
+        reservationNumber:
+          type: string
+          description: Номер бронирования.
+        version:
+          type: integer
+          description: Текущая версия агрегата (используется в If-Match).
+          minimum: 0
+        availableActions:
+          type: array
+          description: Действия, доступные вызывающему для текущего статуса.
+          items:
+            type: string
+    ReservationStatus:
+      type: string
+      description: Статус бронирования.
+      enum:
+        - DRAFT
+        - PENDING
+        - CONFIRMED
+        - CHECKED_IN
+        - ACTIVE
+        - COMPLETED
+        - CANCELLED
+        - EXPIRED
+        - NO_SHOW
+        - REJECTED
+      x-enum-descriptions:
+        DRAFT: Черновик, создан без подтверждения.
+        PENDING: Ожидает подтверждения (оплата/депозит или администратор). Слот заблокирован.
+        CONFIRMED: Подтверждено, слот закреплён.
+        CHECKED_IN: Игрок прибыл, администратор подтвердил приход.
+        ACTIVE: Игровая сессия активна.
+        COMPLETED: Завершено штатно.
+        CANCELLED: Отменено (игроком или администратором до начала).
+        EXPIRED: Истекло до активации (hold timeout или ручное действие администратора).
+        NO_SHOW: Неявка, игрок не прибыл в льготный период.
+        REJECTED: Отклонено администратором.
+    ParticipantStatus:
+      type: string
+      description: Статус участника бронирования.
+      enum:
+        - INVITED
+        - CONFIRMED
+        - CHECKED_IN
+        - DECLINED
+    AllocationStatus:
+      type: string
+      description: Статус выделения (allocation) ресурса в брони.
+      enum:
+        - HELD
+        - CONFIRMED
+        - ACTIVE
+        - RELEASED
+      x-enum-descriptions:
+        HELD: Заблокировано на время брони (до подтверждения).
+        CONFIRMED: Подтверждено, блокирует инвентарь.
+        ACTIVE: Ресурс используется.
+        RELEASED: Освобождено, больше не блокирует инвентарь (история сохраняется).
+    ResourceType:
+      type: string
+      description: Тип резервируемого ресурса.
+      enum:
+        - COMPUTER
+        - VIP_ROOM
+    ExtensionRequestStatus:
+      type: string
+      description: Статус запроса на продление.
+      enum:
+        - PENDING
+        - APPROVED
+        - REJECTED
+        - EXPIRED
+        - CANCELLED
+      x-enum-descriptions:
+        PENDING: Ожидает решения администратора.
+        APPROVED: Продление утверждено, время брони расширено.
+        REJECTED: Продление отклонено.
+        EXPIRED: Запрос устарел (expires_at).
+        CANCELLED: Отменён инициатором.
+    AvailabilityStatus:
+      type: string
+      description: Статус слота доступности.
+      enum:
+        - AVAILABLE
+        - UNAVAILABLE
+    ProviderResourceState:
+      type: string
+      description: |
+        Каноническое состояние ресурса по данным Provider (проекция).
+        Проекция может быть устаревшей — оценивайте freshness по полю `stateObservedAt`/`lastProviderStateAt`.
+      enum:
+        - AVAILABLE
+        - IN_USE
+        - OFFLINE
+        - MAINTENANCE
+        - UNKNOWN
+      x-enum-descriptions:
+        AVAILABLE: Ресурс свободен по данным Provider.
+        IN_USE: Ресурс занят активной сессией.
+        OFFLINE: Ресурс выключен/недоступен.
+        MAINTENANCE: Ресурс в техническом режиме.
+        UNKNOWN: Состояние неизвестно (не обновлялось). Никогда не трактуется как AVAILABLE.
+    ReservationSource:
+      type: string
+      description: Источник создания бронирования.
+      enum:
+        - PLAYER_WEB
+        - ADMIN
+        - MOBILE
+        - KIOSK
+    ActorType:
+      type: string
+      description: Тип исполнителя действия.
+      enum:
+        - USER
+        - SYSTEM
+        - PROVIDER
+    Reservation:
+      type: object
+      description: Заголовок бронирования (агрегат). Выделенные ресурсы и участники — в ReservationDetails.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - playerUserId
+        - reservationNumber
+        - status
+        - startAt
+        - endAt
+        - price
+        - version
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор бронирования.
+          example: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+        organizationId:
+          type: string
+          format: uuid
+          description: Tenant (организация), владелец брони.
+        clubId:
+          type: string
+          format: uuid
+          description: Клуб, в котором создана бронь.
+        clubName:
+          type:
+            - string
+            - 'null'
+          description: Название клуба (denormalized для отображения).
+          example: Cyber Arena
+        playerUserId:
+          type: string
+          format: uuid
+          description: Основной игрок / владелец брони.
+        reservationNumber:
+          type: string
+          maxLength: 32
+          description: Человекочитаемый номер брони в рамках клуба.
+          example: VR-20260804-00042
+        status:
+          $ref: '#/components/schemas/ReservationStatus'
+        startAt:
+          type: string
+          format: date-time
+          description: Начало брони (UTC).
+        endAt:
+          type: string
+          format: date-time
+          description: Окончание брони (UTC). Должно быть позже startAt.
+        arrivalDeadlineAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Дедлайн прибытия; обычно startAt + grace клуба (по умолчанию 10 минут).
+        checkedInAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время подтверждения прихода.
+        checkedInByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Администратор, подтвердивший приход.
+        cancelledAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время отмены.
+        cancelledByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Кто отменил.
+        cancellationReason:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: Причина отмены.
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время завершения.
+        expiredAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время перехода в EXPIRED.
+        noShowAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время фиксации неявки.
+        source:
+          $ref: '#/components/schemas/ReservationSource'
+        notes:
+          type:
+            - string
+            - 'null'
+          maxLength: 1000
+          description: Заметки (административные, без секретов и PII).
+        price:
+          $ref: '#/components/schemas/ReservationPrice'
+        version:
+          type: integer
+          minimum: 0
+          description: Версия оптимистичной блокировки (для If-Match).
+          example: 3
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReservationSummary:
+      type: object
+      description: Краткое представление бронирования для списков и очередей.
+      required:
+        - id
+        - reservationNumber
+        - clubId
+        - playerUserId
+        - status
+        - startAt
+        - endAt
+        - totalMinor
+        - currency
+        - version
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор бронирования.
+        reservationNumber:
+          type: string
+          description: Номер брони.
+          example: VR-20260804-00042
+        clubId:
+          type: string
+          format: uuid
+        clubName:
+          type:
+            - string
+            - 'null'
+          description: Название клуба.
+        playerUserId:
+          type: string
+          format: uuid
+        playerDisplayName:
+          type:
+            - string
+            - 'null'
+          description: Имя игрока (для административных списков).
+        status:
+          $ref: '#/components/schemas/ReservationStatus'
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        resourceCodes:
+          type: array
+          description: Коды выделенных ресурсов для краткого отображения.
+          items:
+            type: string
+          example:
+            - PC-12
+            - PC-13
+        totalMinor:
+          type: string
+          description: Итоговая сумма в minor units (строка).
+          pattern: ^-?\d+$
+          example: '600000'
+        currency:
+          type: string
+          description: ISO 4217.
+          example: KZT
+        version:
+          type: integer
+          description: Версия агрегата.
+        createdAt:
+          type: string
+          format: date-time
+    ReservationDetails:
+      allOf:
+        - $ref: '#/components/schemas/Reservation'
+        - type: object
+          description: 'Полное представление бронирования: ресурсы, участники, история продлений и доступные действия.'
+          required:
+            - allocations
+            - participants
+            - availableActions
+          properties:
+            allocations:
+              type: array
+              description: Выделенные ресурсы (компьютеры и/или VIP-комнаты).
+              items:
+                $ref: '#/components/schemas/ReservationResource'
+            participants:
+              type: array
+              description: Участники брони.
+              items:
+                $ref: '#/components/schemas/ReservationParticipant'
+            extensions:
+              type: array
+              description: История запросов на продление.
+              items:
+                $ref: '#/components/schemas/ReservationExtensionRequest'
+            availableActions:
+              type: array
+              description: Действия, доступные вызывающему для текущего статуса и его роли.
+              items:
+                type: string
+                enum:
+                  - cancel
+                  - requestExtension
+                  - checkIn
+                  - reject
+                  - complete
+                  - expire
+                  - move
+                  - update
+              example:
+                - cancel
+                - requestExtension
+    ReservationCreateRequest:
+      type: object
+      description: |
+        Запрос на создание бронирования.
+
+        Валидация полей:
+        - `clubId`, `resourceIds[*]` — UUID.
+        - `startAt`, `endAt` — ISO 8601 (date-time); `endAt` строго позже `startAt`.
+        - `resourceIds` — от 1 до 10 элементов, без дубликатов; либо один VIP room, либо от 1 до 10 компьютеров; смешивать типы запрещено.
+        - `participantCount` — от 1 и не более суммарной вместимости ресурсов.
+        - `notes` — до 1000 символов.
+        - `discountCode` — до 64 символов.
+      required:
+        - clubId
+        - resourceIds
+        - startAt
+        - endAt
+      properties:
+        clubId:
+          type: string
+          format: uuid
+          description: Клуб, в котором создаётся бронь.
+        resourceIds:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          description: Ресурсы брони (один VIP room либо компьютеры).
+          items:
+            type: string
+            format: uuid
+          example:
+            - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        startAt:
+          type: string
+          format: date-time
+          description: Начало брони. Не ранее чем за 24 часа от текущего момента.
+        endAt:
+          type: string
+          format: date-time
+          description: Окончание брони. Длительность от минимальной (конфигурируемой) до 10 часов.
+        participantCount:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Число участников (не более суммарной вместимости ресурсов).
+        notes:
+          type:
+            - string
+            - 'null'
+          maxLength: 1000
+          description: Заметки.
+        discountCode:
+          type:
+            - string
+            - 'null'
+          maxLength: 64
+          description: Код промокода (если применим к клубу).
+        source:
+          $ref: '#/components/schemas/ReservationSource'
+          default: PLAYER_WEB
+    ReservationUpdateRequest:
+      type: object
+      description: |
+        Запрос на обновление бронирования администратором. Требует заголовок `If-Match` с текущей версией.
+
+        Правила:
+        - Перенос времени повторно проверяет пересечения и рабочие часы клуба.
+        - `participantCount` не может превышать суммарную вместимость ресурсов.
+        - При изменении времени обязателен `reason` (аудит).
+      properties:
+        notes:
+          type:
+            - string
+            - 'null'
+          maxLength: 1000
+          description: Заметки.
+        participantCount:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Новое число участников.
+        startAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Перенос начала брони.
+        endAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Перенос окончания брони.
+        reason:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: Причина изменения (обязательна для переноса времени).
+    ReservationCancelRequest:
+      type: object
+      description: |
+        Запрос на отмену бронирования.
+
+        Правила:
+        - Игрок отменяет до начала; отмена позже cutoff (обычно за 3 часа до старта) запрещена → `422 CANCELLATION_NOT_ALLOWED`.
+        - Администратор отменяет в любой момент до завершения; `reason` обязателен.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Причина отмены.
+        notifyPlayer:
+          type: boolean
+          default: true
+          description: Уведомить игрока об отмене.
+    ReservationExtensionRequestCreate:
+      type: object
+      description: |
+        Запрос на продление брони.
+
+        Правила:
+        - `requestedEndAt` строго позже текущего `endAt`.
+        - Суммарная длительность (startAt → requestedEndAt) не превышает 10 часов.
+        - Бронь должна быть в статусе `CHECKED_IN` или `ACTIVE` → иначе `422 EXTENSION_NOT_ALLOWED`.
+        - На новый интервал не должно быть пересечений с другими активными бронями.
+        - Решение принимает администратор; запрос не меняет бронь до утверждения.
+      required:
+        - requestedEndAt
+      properties:
+        requestedEndAt:
+          type: string
+          format: date-time
+          description: Новое желаемое окончание брони.
+        reason:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: Причина продления.
+    ReservationExtensionRequest:
+      type: object
+      description: Запрос на продление брони. Не мутирует бронь до утверждения администратором.
+      required:
+        - id
+        - reservationId
+        - requestedEndAt
+        - status
+        - expiresAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор запроса на продление.
+        reservationId:
+          type: string
+          format: uuid
+          description: Бронирование, для которого запрошено продление.
+        clubId:
+          type: string
+          format: uuid
+          description: Клуб.
+        requestedEndAt:
+          type: string
+          format: date-time
+          description: Желаемое новое окончание брони.
+        status:
+          $ref: '#/components/schemas/ExtensionRequestStatus'
+        requestedByUserId:
+          type: string
+          format: uuid
+          description: Инициатор запроса.
+        reviewedByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Администратор, принявший решение.
+        reviewedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время решения.
+        reviewReason:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: Комментарий к решению.
+        additionalAmountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^-?\d+$
+          description: Дополнительная сумма при утверждении (minor units, строка).
+        currency:
+          type:
+            - string
+            - 'null'
+          description: ISO 4217.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Дедлайн решения; после него запрос автоматически переходит в EXPIRED.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReservationParticipant:
+      type: object
+      description: Участник бронирования (зарегистрированный игрок или гость).
+      required:
+        - id
+        - participantStatus
+        - isPrimary
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор участника.
+        reservationId:
+          type: string
+          format: uuid
+          description: Бронирование.
+        userId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Зарегистрированный пользователь, если известен.
+        guestName:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+          description: Имя гостя, если пользователь не зарегистрирован.
+        guestPhoneE164:
+          type:
+            - string
+            - 'null'
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+          description: Телефон гостя в формате E.164 (защищённые PII).
+        participantStatus:
+          $ref: '#/components/schemas/ParticipantStatus'
+        isPrimary:
+          type: boolean
+          description: Основной участник (владелец брони). Ровно один на бронь.
+        checkedInAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время подтверждения прихода участника.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReservationResource:
+      type: object
+      description: Выделенный ресурс (allocation) в брони — компьютер или VIP-комната.
+      required:
+        - allocationId
+        - resourceId
+        - resourceType
+        - code
+        - displayName
+        - status
+        - startsAt
+        - endsAt
+      properties:
+        allocationId:
+          type: string
+          format: uuid
+          description: Идентификатор выделения.
+        resourceId:
+          type: string
+          format: uuid
+          description: Идентификатор резервируемого ресурса.
+        resourceType:
+          $ref: '#/components/schemas/ResourceType'
+        code:
+          type: string
+          description: Стабильный код ресурса в клубе.
+          example: PC-12
+        displayName:
+          type: string
+          description: Отображаемое имя ресурса.
+        zoneId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Зона ресурса.
+        zoneName:
+          type:
+            - string
+            - 'null'
+          description: Название зоны.
+        status:
+          $ref: '#/components/schemas/AllocationStatus'
+        startsAt:
+          type: string
+          format: date-time
+          description: Начало выделения.
+        endsAt:
+          type: string
+          format: date-time
+          description: Конец выделения.
+        releasedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время освобождения ресурса.
+        releaseReason:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+          description: Причина освобождения (cancellation, move, completion, repair).
+        movedFromAllocationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Ссылка на исходное выделение при перемещении.
+        computer:
+          allOf:
+            - $ref: '#/components/schemas/ReservationComputer'
+            - type: object
+              description: Заполняется при resourceType = COMPUTER.
+        vipRoom:
+          allOf:
+            - $ref: '#/components/schemas/ReservationVIPRoom'
+            - type: object
+              description: Заполняется при resourceType = VIP_ROOM.
+    ReservationComputer:
+      type: object
+      description: Сведения о компьютере в составе брони.
+      required:
+        - computerId
+        - number
+        - displayName
+      properties:
+        computerId:
+          type: string
+          format: uuid
+          description: Идентификатор компьютера.
+        number:
+          type: integer
+          minimum: 1
+          description: Номер компьютера в клубе.
+        displayName:
+          type: string
+          description: Отображаемое имя.
+        gpu:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+          description: Видеокарта.
+        cpu:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+          description: Процессор.
+        ramGb:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Оперативная память, ГБ.
+        monitor:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+          description: Монитор.
+        state:
+          $ref: '#/components/schemas/ProviderResourceState'
+          description: Последняя известная проекция состояния от Provider.
+    ReservationVIPRoom:
+      type: object
+      description: Сведения о VIP-комнате в составе брони.
+      required:
+        - roomId
+        - displayName
+        - seatCapacity
+      properties:
+        roomId:
+          type: string
+          format: uuid
+          description: Идентификатор VIP-комнаты.
+        roomNumber:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Номер комнаты.
+        displayName:
+          type: string
+          description: Отображаемое имя.
+        seatCapacity:
+          type: integer
+          minimum: 1
+          description: Вместимость по участникам.
+        computerCount:
+          type: integer
+          minimum: 0
+          description: Количество компьютеров в комнате.
+        amenities:
+          type: array
+          description: Удобства.
+          items:
+            type: string
+          example:
+            - projector
+            - lounge
+    ReservationPrice:
+      type: object
+      description: |
+        Финансовый снимок бронирования. Все суммы — целые числа в минимальных единицах валюты, строкой.
+        Историческая цена не пересчитывается при изменении тарифов.
+      required:
+        - subtotalMinor
+        - discountMinor
+        - totalMinor
+        - currency
+      properties:
+        subtotalMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Сумма до скидок.
+          example: '600000'
+        discountMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Суммарная скидка (неотрицательная).
+          example: '60000'
+        totalMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Итоговая сумма (subtotal - discount).
+          example: '540000'
+        depositMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Требуемый/внесённый депозит.
+          example: '120000'
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: ISO 4217.
+          example: KZT
+        components:
+          type: array
+          description: Объяснимая структура цены.
+          items:
+            type: object
+            required:
+              - componentType
+              - description
+              - amountMinor
+            properties:
+              componentType:
+                type: string
+                enum:
+                  - BASE
+                  - OVERRIDE
+                  - SURCHARGE
+                  - DISCOUNT
+                  - ROUNDING
+              description:
+                type: string
+                maxLength: 240
+                description: Замороженное описание строки.
+              quantity:
+                type: number
+                description: Количество (часы/единицы).
+              amountMinor:
+                type: string
+                pattern: ^-?\d+$
+                description: Сумма строки (скидки — отрицательные).
+    ReservationConflict:
+      type: object
+      description: Детализация конфликта бронирования (пересечение интервалов).
+      required:
+        - code
+        - resourceId
+        - resourceType
+        - requestedStartAt
+        - requestedEndAt
+      properties:
+        code:
+          type: string
+          description: Код конфликта.
+          enum:
+            - RESERVATION_SLOT_CONFLICT
+            - COMPUTER_ALREADY_RESERVED
+            - VIP_ROOM_OCCUPIED
+        title:
+          type: string
+          description: Краткое описание.
+        resourceId:
+          type: string
+          format: uuid
+          description: Ресурс, с которым конфликт.
+        resourceType:
+          $ref: '#/components/schemas/ResourceType'
+        resourceCode:
+          type: string
+          description: Код ресурса.
+          example: PC-12
+        conflictingReservationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Существующая бронь, пересекающаяся с запросом.
+        conflictingPeriod:
+          type: object
+          description: Пересекающийся интервал существующей брони.
+          properties:
+            startAt:
+              type: string
+              format: date-time
+            endAt:
+              type: string
+              format: date-time
+        requestedStartAt:
+          type: string
+          format: date-time
+          description: Запрошенное начало.
+        requestedEndAt:
+          type: string
+          format: date-time
+          description: Запрошенное окончание.
+    ReservationValidation:
+      type: object
+      description: Результат валидации возможности создания брони (без фактического создания).
+      required:
+        - valid
+        - conflicts
+      properties:
+        valid:
+          type: boolean
+          description: true, если бронь может быть создана без конфликтов и нарушений правил.
+        checks:
+          type: object
+          description: Результаты отдельных проверок.
+          properties:
+            clubOpen:
+              type: boolean
+              description: Клуб открыт в интервале (расписание и закрытия).
+            withinBookingHorizon:
+              type: boolean
+              description: Начало не позднее чем за 24 часа от текущего момента.
+            durationValid:
+              type: boolean
+              description: Длительность в пределах (мин — конфигурируемо, макс — 10 часов).
+            noOverlap:
+              type: boolean
+              description: Нет пересечений с активными бронями.
+            providerStateFresh:
+              type: boolean
+              description: Состояние ресурса от Provider свежее (в пределах provider_state_ttl клуба).
+        conflicts:
+          type: array
+          description: Конфликты пересечения.
+          items:
+            $ref: '#/components/schemas/ReservationConflict'
+        warnings:
+          type: array
+          description: Некритичные предупреждения (например, быстрое окончание смены клуба).
+          items:
+            type: string
+    ReservationTimeline:
+      type: object
+      description: Хронология событий бронирования (включая продления, перемещения, обновления).
+      required:
+        - reservationId
+        - items
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEntry'
+    TimelineEntry:
+      type: object
+      description: Запись хронологии бронирования.
+      required:
+        - eventType
+        - occurredAt
+      properties:
+        eventType:
+          type: string
+          description: Тип события.
+          enum:
+            - CREATED
+            - CONFIRMED
+            - CHECKED_IN
+            - ACTIVE
+            - COMPLETED
+            - CANCELLED
+            - EXPIRED
+            - NO_SHOW
+            - REJECTED
+            - EXTENSION_REQUESTED
+            - EXTENSION_APPROVED
+            - EXTENSION_REJECTED
+            - MOVED
+            - UPDATED
+        occurredAt:
+          type: string
+          format: date-time
+          description: Время события (UTC).
+        actorType:
+          $ref: '#/components/schemas/ActorType'
+        actorUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Пользователь-инициатор, если применимо.
+        description:
+          type: string
+          description: Краткое описание события.
+        metadata:
+          type: object
+          description: Дополнительный контекст (без PII и секретов).
+    ReservationHistory:
+      type: object
+      description: Полная история смены статусов бронирования (immutable, append-only).
+      required:
+        - reservationId
+        - items
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          description: Записи переходов статусов в хронологическом порядке.
+          items:
+            $ref: '#/components/schemas/ReservationStatusHistoryEntry'
+    ReservationStatusHistoryEntry:
+      type: object
+      description: Запись перехода статуса бронирования (immutable).
+      required:
+        - fromStatus
+        - toStatus
+        - actorType
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор записи.
+        reservationId:
+          type: string
+          format: uuid
+        fromStatus:
+          anyOf:
+            - $ref: '#/components/schemas/ReservationStatus'
+            - type: 'null'
+          description: Исходный статус; null для создания брони.
+        toStatus:
+          $ref: '#/components/schemas/ReservationStatus'
+          description: Новый статус.
+        actorType:
+          $ref: '#/components/schemas/ActorType'
+        changedByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Пользователь-инициатор; null для системных переходов.
+        reasonCode:
+          type:
+            - string
+            - 'null'
+          maxLength: 100
+          description: Стабильный код причины перехода.
+        metadata:
+          type: object
+          description: Минимальный контекст перехода (без PII и секретов).
+        createdAt:
+          type: string
+          format: date-time
+          description: Время перехода (UTC).
+    ReservationAvailability:
+      type: object
+      description: Доступность ресурсов клуба в запрошенном интервале.
+      required:
+        - clubId
+        - from
+        - to
+        - resources
+      properties:
+        clubId:
+          type: string
+          format: uuid
+          description: Клуб.
+        from:
+          type: string
+          format: date-time
+          description: Начало запрошенного интервала (inclusive).
+        to:
+          type: string
+          format: date-time
+          description: Конец запрошенного интервала (exclusive).
+        timezone:
+          type: string
+          description: IANA-таймзона клуба (локальные правила).
+          example: Asia/Almaty
+        resources:
+          type: array
+          description: Доступность по каждому ресурсу.
+          items:
+            $ref: '#/components/schemas/ReservationResourceAvailability'
+    ReservationResourceAvailability:
+      type: object
+      description: Доступность одного ресурса в запрошенном интервале.
+      required:
+        - resourceId
+        - resourceType
+        - code
+        - displayName
+        - availability
+      properties:
+        resourceId:
+          type: string
+          format: uuid
+          description: Идентификатор ресурса.
+        resourceType:
+          $ref: '#/components/schemas/ResourceType'
+        code:
+          type: string
+          description: Код ресурса в клубе.
+          example: PC-12
+        displayName:
+          type: string
+          description: Отображаемое имя.
+        zoneId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Зона.
+        zoneName:
+          type:
+            - string
+            - 'null'
+          description: Название зоны.
+        state:
+          $ref: '#/components/schemas/ProviderResourceState'
+          description: Последняя проекция состояния от Provider (может быть устаревшей).
+        stateObservedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время наблюдения состояния (freshness).
+        availability:
+          type: array
+          description: Слоты доступности в пределах интервала.
+          items:
+            type: object
+            required:
+              - startAt
+              - endAt
+              - status
+            properties:
+              startAt:
+                type: string
+                format: date-time
+              endAt:
+                type: string
+                format: date-time
+              status:
+                $ref: '#/components/schemas/AvailabilityStatus'
+              reason:
+                type:
+                  - string
+                  - 'null'
+                description: Причина недоступности (бронь, сессия, maintenance, закрытие клуба).
+              conflictingReservationId:
+                type:
+                  - string
+                  - 'null'
+                format: uuid
+                description: Пересекающаяся бронь, если причина — бронь.
+    ReservationStatusView:
+      type: object
+      description: Текущий статус бронирования и доступные действия.
+      required:
+        - reservationId
+        - status
+        - version
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+          description: Идентификатор бронирования.
+        status:
+          $ref: '#/components/schemas/ReservationStatus'
+        version:
+          type: integer
+          description: Версия агрегата.
+        updatedAt:
+          type: string
+          format: date-time
+          description: Время последнего изменения.
+        availableActions:
+          type: array
+          description: Действия, доступные вызывающему.
+          items:
+            type: string
+          example:
+            - cancel
+            - requestExtension
+    UserStatus:
+      type: string
+      description: Статус учётной записи пользователя.
+      enum:
+        - ACTIVE
+        - BLOCKED
+        - DEACTIVATED
+      example: ACTIVE
+    User:
+      type: object
+      description: Публичный профиль пользователя Visora (игрок и/или сотрудник). Глобальная identity; tenant-роли хранятся в memberships.
+      required:
+        - id
+        - status
+        - locale
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор пользователя.
+        phoneE164:
+          type:
+            - string
+            - 'null'
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+          description: Нормализованный номер телефона (E.164). Возвращается только владельцу профиля; в логах маскируется.
+        displayName:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+          description: Отображаемое имя.
+        emailNormalized:
+          type:
+            - string
+            - 'null'
+          maxLength: 320
+          format: email
+          description: Нормализованный email (будущая контактная/identity-проверка).
+        locale:
+          type: string
+          maxLength: 16
+          description: Предпочитаемая локаль, например `ru-KZ`.
+          example: ru-KZ
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        phoneVerifiedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время подтверждения телефона (первый успешный OTP).
+        lastLoginAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время последнего успешного входа.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    OtpRequest:
+      type: object
+      description: Запрос одноразового кода (OTP) по номеру телефона.
+      required:
+        - phone
+      properties:
+        phone:
+          type: string
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+          description: Номер телефона в формате E.164, например `+77012345678`.
+          example: '+77012345678'
+        deviceId:
+          type: string
+          maxLength: 160
+          description: Клиентский идентификатор устройства для rate limiting и привязки сессии.
+          example: android-8f4a2c
+    OtpChallenge:
+      type: object
+      description: Результат запроса OTP. Одноразовый challenge; код действует 5 минут.
+      required:
+        - challengeId
+        - retryAfterSeconds
+        - expiresInSeconds
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+          description: Идентификатор challenge для последующей верификации.
+          example: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+        maskedPhone:
+          type: string
+          description: Маскированный телефон, например `+7 701 *** 78 90`. Не раскрывает факт существования пользователя.
+          example: +7 701 *** 78 90
+        retryAfterSeconds:
+          type: integer
+          minimum: 0
+          description: Минимальный интервал до повторной отправки (не менее 60 секунд).
+          example: 60
+        expiresInSeconds:
+          type: integer
+          minimum: 1
+          description: Срок действия кода (5 минут).
+          example: 300
+        devStaticCode:
+          type:
+            - string
+            - 'null'
+          description: Статический код для non-production среды. Возвращается только в dev и явно маркируется; в production поле отсутствует.
+    OtpVerifyRequest:
+      type: object
+      description: Верификация одноразового кода. Успех создаёт server-side session и пару токенов.
+      required:
+        - challengeId
+        - code
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+          description: Идентификатор challenge из ответа на запрос OTP.
+        code:
+          type: string
+          pattern: ^\d{4,6}$
+          minLength: 4
+          maxLength: 6
+          description: Одноразовый код.
+          example: '481293'
+        deviceId:
+          type: string
+          maxLength: 160
+          description: Клиентский идентификатор устройства; привязывается к сессии.
+        deviceName:
+          type: string
+          maxLength: 160
+          description: Отображаемое имя устройства для списка сессий.
+          example: Chrome on macOS
+    AuthTokens:
+      type: object
+      description: Пара токенов после успешной аутентификации или refresh. Refresh token для web передаётся в HttpOnly Secure cookie; для mobile — в теле ответа.
+      required:
+        - accessToken
+        - tokenType
+        - expiresInSeconds
+        - session
+      properties:
+        accessToken:
+          type: string
+          description: 'Короткоживущий JWT (10–15 минут). Передаётся в `Authorization: Bearer <token>`.'
+        tokenType:
+          type: string
+          enum:
+            - Bearer
+          default: Bearer
+        expiresInSeconds:
+          type: integer
+          description: Срок действия access token в секундах.
+          example: 900
+        refreshToken:
+          type:
+            - string
+            - 'null'
+          description: Opaque refresh token. Возвращается в теле только для mobile; для web передаётся в Set-Cookie (HttpOnly, Secure, SameSite=Lax) и здесь отсутствует.
+        session:
+          $ref: '#/components/schemas/AuthSession'
+    AuthSession:
+      type: object
+      description: Серверная сессия аутентификации. Хранит устройство и состояние отзыва; привязана к паре токенов.
+      required:
+        - id
+        - userId
+        - createdAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор сессии (claim `sid` access token).
+        userId:
+          type: string
+          format: uuid
+          description: Владелец сессии.
+        deviceId:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+          description: Клиентский идентификатор устройства.
+        deviceName:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+          description: Отображаемое имя устройства.
+        activeOrganizationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Последний выбранный tenant-контекст. Не является авторизационным grant; membership всегда проверяется отдельно.
+        isCurrent:
+          type: boolean
+          description: Текущая сессия вызывающего.
+          default: false
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время последней ротации refresh token.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Срок действия refresh token (30 дней).
+        revokedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время отзыва (logout, replay, администратор).
+        revokeReason:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+          description: Причина отзыва.
+    RevokeSessionRequest:
+      type: object
+      description: Запрос на отзыв сессии. Позволяет указать причину для аудита.
+      properties:
+        reason:
+          type: string
+          maxLength: 120
+          description: Причина отзыва (например, `Устройство потеряно`).
+    SessionRevokeReason:
+      type: string
+      description: Причина отзыва refresh-сессии.
+      enum:
+        - LOGOUT
+        - SECURITY
+        - ADMIN
+        - REPLACED
+      example: LOGOUT
+  parameters:
+    ReservationId:
+      name: reservationId
+      in: path
+      required: true
+      description: Идентификатор бронирования (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+    ExtensionId:
+      name: extensionId
+      in: path
+      required: true
+      description: Идентификатор запроса на продление (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 7d8e9f0a-4a1b-4c2d-8e3f-5a6b7c8d9e0f
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Номер страницы (начиная с 1).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      example: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      description: Размер страницы.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+    Sort:
+      name: sort
+      in: query
+      required: false
+      description: |
+        Сортировка в формате `поле:направление`.
+        Допустимые поля: `startAt`, `endAt`, `createdAt`, `totalMinor`.
+        Направление: `asc` или `desc`.
+      schema:
+        type: string
+        pattern: ^(startAt|endAt|createdAt|totalMinor):(asc|desc)$
+        default: startAt:desc
+      example: startAt:desc
+    Q:
+      name: q
+      in: query
+      required: false
+      description: Поиск по номеру брони, имени или телефону игрока.
+      schema:
+        type: string
+        maxLength: 100
+      example: VR-20260804
+    From:
+      name: from
+      in: query
+      required: false
+      description: Начало интервала фильтрации (inclusive).
+      schema:
+        type: string
+        format: date-time
+      example: '2026-08-04T00:00:00Z'
+    To:
+      name: to
+      in: query
+      required: false
+      description: Конец интервала фильтрации (exclusive).
+      schema:
+        type: string
+        format: date-time
+      example: '2026-08-05T00:00:00Z'
+    StatusFilter:
+      name: status
+      in: query
+      required: false
+      description: |
+        Фильтр по статусам бронирования. Можно указать несколько значений через запятую.
+        Допустимые значения: `DRAFT`, `PENDING`, `CONFIRMED`, `CHECKED_IN`, `ACTIVE`, `COMPLETED`, `CANCELLED`, `EXPIRED`, `NO_SHOW`, `REJECTED`.
+      style: form
+      explode: false
+      schema:
+        type: array
+        items:
+          $ref: '#/components/schemas/ReservationStatus'
+      example:
+        - CONFIRMED
+        - CHECKED_IN
+    ClubIdQuery:
+      name: clubId
+      in: query
+      required: false
+      description: Идентификатор клуба (UUID). Обязателен для администратора с несколькими клубами.
+      schema:
+        type: string
+        format: uuid
+      example: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+    PlayerId:
+      name: playerId
+      in: query
+      required: false
+      description: Идентификатор игрока (UUID). Только для CLUB_ADMIN/ORG_OWNER.
+      schema:
+        type: string
+        format: uuid
+      example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+    ResourceId:
+      name: resourceId
+      in: query
+      required: false
+      description: Идентификатор ресурса (компьютера или VIP-комнаты, UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+    ResourceTypeQuery:
+      name: resourceType
+      in: query
+      required: false
+      description: Тип ресурса.
+      schema:
+        $ref: '#/components/schemas/ResourceType'
+    ZoneIds:
+      name: zoneIds
+      in: query
+      required: false
+      description: Список зон (UUID), разделённых запятой.
+      schema:
+        type: string
+      example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f,1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+    IncludeState:
+      name: includeState
+      in: query
+      required: false
+      description: Включить последнее известное состояние ресурса от Provider и его freshness.
+      schema:
+        type: boolean
+        default: false
+    AdminDate:
+      name: date
+      in: query
+      required: false
+      description: Дата очереди (локальная дата клуба, ISO 8601 `YYYY-MM-DD`). По умолчанию — сегодня.
+      schema:
+        type: string
+        format: date
+      example: '2026-08-04'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Уникальный ключ операции (UUID).
+        Повторный запрос с тем же ключом и тем же телом возвращает сохранённый результат.
+        Тот же ключ с другим телом → `409 IDEMPOTENCY_KEY_REUSED`.
+        Клиент хранит ключ до завершения операции или явной ошибки.
+      schema:
+        type: string
+        format: uuid
+      example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Уникальный ключ операции (UUID) для безопасного повторения запроса.
+      schema:
+        type: string
+        format: uuid
+      example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        Текущая версия ресурса (значение поля `version` брони) для оптимистичной блокировки.
+        Пример: `"7"`. При расхождении — `409 VERSION_CONFLICT`.
+      schema:
+        type: string
+        example: '"7"'
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: Идентификатор корреляции запроса. Прокидывается в логи, трассировку и ответ ошибки.
+      schema:
+        type: string
+        format: uuid
+      example: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Идентификатор сессии аутентификации (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: b4c1d9e8-3e2f-4a5b-8c6d-7e8f9a0b1c2d
+    DeviceIdHeader:
+      name: X-Device-Id
+      in: header
+      required: false
+      description: Клиентский идентификатор устройства. Используется для rate limiting и привязки сессии; должен совпадать с `deviceId` из тела запроса.
+      schema:
+        type: string
+        maxLength: 160
+      example: android-8f4a2c
+    SessionStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр сессий по состоянию.
+      schema:
+        type: string
+        enum:
+          - ACTIVE
+          - REVOKED
+      example: ACTIVE
+  responses:
+    BadRequest:
+      description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            badRequest:
+              value:
+                type: https://docs.visora.kz/problems/validation-error
+                title: Некорректный запрос
+                status: 400
+                code: VALIDATION_ERROR
+                detail: Поле startAt должно быть датой в формате ISO 8601
+                instance: /api/v1/reservations
+                errors:
+                  - field: startAt
+                    code: FORMAT
+                    message: Должно быть формата date-time
+    Unauthorized:
+      description: Требуется аутентификация или токен недействителен.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            unauthorized:
+              value:
+                type: https://docs.visora.kz/problems/unauthorized
+                title: Требуется аутентификация
+                status: 401
+                code: UNAUTHORIZED
+                detail: Access token отсутствует или истёк
+                instance: /api/v1/reservations
+    Forbidden:
+      description: Пользователь аутентифицирован, но не имеет прав на операцию или ресурс вне его scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            forbidden:
+              value:
+                type: https://docs.visora.kz/problems/forbidden
+                title: Доступ запрещён
+                status: 403
+                code: FORBIDDEN
+                detail: Нет разрешения reservation.check_in.club для указанного клуба
+                instance: /api/v1/admin/reservations/3fa85f64-5717-4562-b3fc-2c963f66afa6/check-in
+    NotFound:
+      description: Ресурс не найден или скрыт scope'ом.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            notFound:
+              value:
+                type: https://docs.visora.kz/problems/reservation-not-found
+                title: Бронирование не найдено
+                status: 404
+                code: RESERVATION_NOT_FOUND
+                detail: Бронирование не существует или недоступно в текущем контексте
+                instance: /api/v1/reservations/3fa85f64-5717-4562-b3fc-2c963f66afa6
+    Conflict:
+      description: Конфликт состояния или конкуренция (пересечение броней, версия, идемпотентность).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            conflict:
+              $ref: '#/components/examples/ConflictErrorExample'
+    UnprocessableEntity:
+      description: Запрос синтаксически корректен, но нарушает бизнес-правило.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            unprocessable:
+              $ref: '#/components/examples/ValidationErrorExample'
+    TooManyRequests:
+      description: Превышен rate limit. Повторите позже.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            tooManyRequests:
+              value:
+                type: https://docs.visora.kz/problems/rate-limited
+                title: Слишком много запросов
+                status: 429
+                code: RATE_LIMITED
+                detail: Превышен лимит запросов, повторите через несколько секунд
+                instance: /api/v1/reservations
+    ServiceUnavailable:
+      description: Временная недоступность зависимости (например, Provider или база данных).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          examples:
+            serviceUnavailable:
+              value:
+                type: https://docs.visora.kz/problems/service-unavailable
+                title: Сервис временно недоступен
+                status: 503
+                code: SERVICE_UNAVAILABLE
+                detail: Не удалось подтвердить состояние ресурса у Provider
+                instance: /api/v1/reservations
+  examples:
+    CreateReservationRequest:
+      summary: Запрос на создание бронирования
+      value:
+        clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+        resourceIds:
+          - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        startAt: '2026-08-04T15:00:00Z'
+        endAt: '2026-08-04T17:00:00Z'
+        participantCount: 1
+        source: PLAYER_WEB
+    CreateReservationResponse:
+      summary: Успешное создание бронирования (201)
+      value:
+        data:
+          id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          organizationId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+          clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+          clubName: Cyber Arena
+          playerUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          reservationNumber: VR-20260804-00042
+          status: PENDING
+          startAt: '2026-08-04T15:00:00Z'
+          endAt: '2026-08-04T17:00:00Z'
+          arrivalDeadlineAt: '2026-08-04T15:10:00Z'
+          source: PLAYER_WEB
+          price:
+            subtotalMinor: '600000'
+            discountMinor: '0'
+            totalMinor: '600000'
+            depositMinor: '120000'
+            currency: KZT
+            components:
+              - componentType: BASE
+                description: 2 часа × 300000 KZT/час
+                quantity: 2
+                amountMinor: '600000'
+          version: 1
+          createdAt: '2026-08-04T10:12:30Z'
+          updatedAt: '2026-08-04T10:12:30Z'
+          allocations:
+            - allocationId: 4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              resourceType: COMPUTER
+              code: PC-12
+              displayName: PC 12
+              zoneName: Main Hall
+              status: HELD
+              startsAt: '2026-08-04T15:00:00Z'
+              endsAt: '2026-08-04T17:00:00Z'
+              computer:
+                computerId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                number: 12
+                displayName: PC 12
+                gpu: RTX 4070
+                cpu: Ryzen 7 7700
+                ramGb: 32
+                state: AVAILABLE
+          participants:
+            - id: 8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+              userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+              participantStatus: CONFIRMED
+              isPrimary: true
+              createdAt: '2026-08-04T10:12:30Z'
+          availableActions:
+            - cancel
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:12:30Z'
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          reservationNumber: VR-20260804-00042
+          version: 1
+          availableActions:
+            - cancel
+    ReservationDetailsExample:
+      summary: Детали подтверждённого бронирования
+      value:
+        data:
+          id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          organizationId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+          clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+          clubName: Cyber Arena
+          playerUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          reservationNumber: VR-20260804-00042
+          status: CONFIRMED
+          startAt: '2026-08-04T15:00:00Z'
+          endAt: '2026-08-04T17:00:00Z'
+          arrivalDeadlineAt: '2026-08-04T15:10:00Z'
+          source: PLAYER_WEB
+          price:
+            subtotalMinor: '600000'
+            discountMinor: '60000'
+            totalMinor: '540000'
+            depositMinor: '120000'
+            currency: KZT
+            components:
+              - componentType: BASE
+                description: 2 часа × 300000 KZT/час
+                quantity: 2
+                amountMinor: '600000'
+              - componentType: DISCOUNT
+                description: Промо Early Bird -10%
+                quantity: 1
+                amountMinor: '-60000'
+          version: 3
+          createdAt: '2026-08-04T10:12:30Z'
+          updatedAt: '2026-08-04T10:13:05Z'
+          allocations:
+            - allocationId: 4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              resourceType: COMPUTER
+              code: PC-12
+              displayName: PC 12
+              zoneName: Main Hall
+              status: CONFIRMED
+              startsAt: '2026-08-04T15:00:00Z'
+              endsAt: '2026-08-04T17:00:00Z'
+              computer:
+                computerId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                number: 12
+                displayName: PC 12
+                gpu: RTX 4070
+                cpu: Ryzen 7 7700
+                ramGb: 32
+                state: AVAILABLE
+          participants:
+            - id: 8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+              userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+              participantStatus: CONFIRMED
+              isPrimary: true
+              createdAt: '2026-08-04T10:12:30Z'
+          extensions: []
+          availableActions:
+            - cancel
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:13:06Z'
+    ReservationHistoryExample:
+      summary: История смены статусов бронирования
+      value:
+        data:
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          items:
+            - id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+              reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+              fromStatus: null
+              toStatus: DRAFT
+              actorType: USER
+              changedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+              reasonCode: CREATE
+              createdAt: '2026-08-04T10:12:30Z'
+            - id: b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e
+              reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+              fromStatus: DRAFT
+              toStatus: PENDING
+              actorType: USER
+              changedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+              reasonCode: SUBMIT
+              createdAt: '2026-08-04T10:12:31Z'
+            - id: c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f
+              reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+              fromStatus: PENDING
+              toStatus: CONFIRMED
+              actorType: SYSTEM
+              reasonCode: DEPOSIT_ACCEPTED
+              createdAt: '2026-08-04T10:13:05Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:13:06Z'
+    AvailabilityCheckExample:
+      summary: Проверка доступности ресурсов
+      value:
+        data:
+          clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+          from: '2026-08-04T15:00:00Z'
+          to: '2026-08-04T18:00:00Z'
+          timezone: Asia/Almaty
+          resources:
+            - resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              resourceType: COMPUTER
+              code: PC-12
+              displayName: PC 12
+              zoneName: Main Hall
+              state: AVAILABLE
+              stateObservedAt: '2026-08-04T10:11:00Z'
+              availability:
+                - startAt: '2026-08-04T15:00:00Z'
+                  endAt: '2026-08-04T17:00:00Z'
+                  status: UNAVAILABLE
+                  reason: Пересечение с бронью VR-20260804-00039
+                  conflictingReservationId: 9f8e7d6c-5b4a-4c3d-2e1f-0a9b8c7d6e5f
+                - startAt: '2026-08-04T17:00:00Z'
+                  endAt: '2026-08-04T18:00:00Z'
+                  status: AVAILABLE
+            - resourceId: 6e5f4a3b-2c1d-4e0f-8a9b-0c1d2e3f4a5b
+              resourceType: COMPUTER
+              code: PC-13
+              displayName: PC 13
+              zoneName: Main Hall
+              state: IN_USE
+              stateObservedAt: '2026-08-04T10:10:30Z'
+              availability:
+                - startAt: '2026-08-04T15:00:00Z'
+                  endAt: '2026-08-04T18:00:00Z'
+                  status: AVAILABLE
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:11:02Z'
+    ConflictErrorExample:
+      summary: Ошибка конфликта бронирования (409)
+      value:
+        type: https://docs.visora.kz/problems/reservation-slot-conflict
+        title: Бронирование конфликтует с существующим
+        status: 409
+        code: RESERVATION_SLOT_CONFLICT
+        detail: Выбранный компьютер уже занят в указанный интервал
+        instance: /api/v1/reservations
+        correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+        errors:
+          - field: resourceIds
+            code: COMPUTER_ALREADY_RESERVED
+            message: PC-12 занят с 15:00 до 17:00
+    ExtensionRequestExample:
+      summary: Запрос на продление брони (201)
+      value:
+        data:
+          id: 7d8e9f0a-4a1b-4c2d-8e3f-5a6b7c8d9e0f
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+          requestedEndAt: '2026-08-04T19:00:00Z'
+          status: PENDING
+          requestedByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          expiresAt: '2026-08-04T17:30:00Z'
+          currency: KZT
+          createdAt: '2026-08-04T16:00:00Z'
+          updatedAt: '2026-08-04T16:00:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T16:00:00Z'
+    CancellationExample:
+      summary: Отменённое бронирование (200)
+      value:
+        data:
+          id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          organizationId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+          clubId: 1c1308a1-4c0e-4d3b-9f2a-0a1b2c3d4e5f
+          clubName: Cyber Arena
+          playerUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          reservationNumber: VR-20260804-00042
+          status: CANCELLED
+          startAt: '2026-08-04T15:00:00Z'
+          endAt: '2026-08-04T17:00:00Z'
+          arrivalDeadlineAt: '2026-08-04T15:10:00Z'
+          cancelledAt: '2026-08-04T12:00:00Z'
+          cancelledByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          cancellationReason: Передумал
+          source: PLAYER_WEB
+          price:
+            subtotalMinor: '600000'
+            discountMinor: '60000'
+            totalMinor: '540000'
+            depositMinor: '120000'
+            currency: KZT
+            components: []
+          version: 4
+          createdAt: '2026-08-04T10:12:30Z'
+          updatedAt: '2026-08-04T12:00:00Z'
+          allocations:
+            - allocationId: 4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b
+              resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              resourceType: COMPUTER
+              code: PC-12
+              displayName: PC 12
+              zoneName: Main Hall
+              status: RELEASED
+              startsAt: '2026-08-04T15:00:00Z'
+              endsAt: '2026-08-04T17:00:00Z'
+              releasedAt: '2026-08-04T12:00:00Z'
+              releaseReason: CANCELLATION
+              computer:
+                computerId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                number: 12
+                displayName: PC 12
+                gpu: RTX 4070
+                cpu: Ryzen 7 7700
+                ramGb: 32
+                state: AVAILABLE
+          participants:
+            - id: 8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d
+              userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+              participantStatus: DECLINED
+              isPrimary: true
+              createdAt: '2026-08-04T10:12:30Z'
+          extensions: []
+          availableActions: []
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T12:00:00Z'
+          reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          reservationNumber: VR-20260804-00042
+          version: 4
+          availableActions: []
+    ValidationErrorExample:
+      summary: Нарушение бизнес-правила (422)
+      value:
+        type: https://docs.visora.kz/problems/business-rule-violation
+        title: Нарушено бизнес-правило
+        status: 422
+        code: MAXIMUM_DURATION_EXCEEDED
+        detail: Длительность брони превышает максимум 10 часов
+        instance: /api/v1/reservations
+        correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+        errors:
+          - field: endAt
+            code: MAXIMUM_DURATION_EXCEEDED
+            message: Интервал не может превышать 10 часов
+    OtpRequestExample:
+      summary: Запрос OTP-кода
+      value:
+        phone: '+77012345678'
+        deviceId: android-8f4a2c
+    OtpChallengeExample:
+      summary: Ответ на запрос OTP-кода
+      value:
+        data:
+          challengeId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+          maskedPhone: +7 701 *** 78 90
+          retryAfterSeconds: 60
+          expiresInSeconds: 300
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:12:30Z'
+    OtpVerifyRequestExample:
+      summary: Верификация OTP-кода
+      value:
+        challengeId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+        code: '481293'
+        deviceId: android-8f4a2c
+        deviceName: Chrome on macOS
+    OtpVerifyResponseExample:
+      summary: 'Успешная аутентификация (мобильный: refresh token в теле)'
+      value:
+        data:
+          accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1YTRiM2MyZC0xZTJmLTRhM2ItOGM3ZC02ZTVmNGEzYjJjMWQiLCJzaWQiOiJiNGMxZDllOC0zZTJmLTRhNWItOGM2ZC03ZThmOWEwYjFjMmQiLCJpc3MiOiJodHRwczovL2FwaS52aXNvcmEua3oiLCJhdWQiOiJ2aXNvcmEtYXBpIiwiaWF0IjoxNzI4NTAwMDAwLCJleHAiOjE3Mjg1MDA5MDB9.signature
+          tokenType: Bearer
+          expiresInSeconds: 900
+          refreshToken: v1.refresh.9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f
+          session:
+            id: b4c1d9e8-3e2f-4a5b-8c6d-7e8f9a0b1c2d
+            userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            deviceId: android-8f4a2c
+            deviceName: Chrome on macOS
+            isCurrent: true
+            createdAt: '2026-08-04T10:13:06Z'
+            lastUsedAt: '2026-08-04T10:13:06Z'
+            expiresAt: '2026-09-03T10:13:06Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:13:06Z'
+    AuthSessionsExample:
+      summary: Список активных сессий пользователя
+      value:
+        data:
+          - id: b4c1d9e8-3e2f-4a5b-8c6d-7e8f9a0b1c2d
+            userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            deviceId: android-8f4a2c
+            deviceName: Chrome on macOS
+            isCurrent: true
+            createdAt: '2026-08-04T10:13:06Z'
+            lastUsedAt: '2026-08-04T10:13:06Z'
+            expiresAt: '2026-09-03T10:13:06Z'
+          - id: c5d2e9f8-4f3a-4b6c-9d3e-2b1c0d9e8f7a
+            userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            deviceId: ios-77b3d9
+            deviceName: iPhone 15
+            isCurrent: false
+            createdAt: '2026-08-01T18:40:00Z'
+            lastUsedAt: '2026-08-02T09:15:00Z'
+            expiresAt: '2026-08-31T18:40:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    UserExample:
+      summary: Публичный профиль пользователя
+      value:
+        data:
+          id: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+          phoneE164: '+77012345678'
+          displayName: Dastan
+          locale: ru-KZ
+          status: ACTIVE
+          phoneVerifiedAt: '2026-08-04T10:13:06Z'
+          lastLoginAt: '2026-08-04T10:13:06Z'
+          createdAt: '2026-08-04T10:13:06Z'
+          updatedAt: '2026-08-04T10:13:06Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:13:06Z'

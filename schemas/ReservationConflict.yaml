@@ -1,0 +1,51 @@
+type: object
+description: Детализация конфликта бронирования (пересечение интервалов).
+required:
+  - code
+  - resourceId
+  - resourceType
+  - requestedStartAt
+  - requestedEndAt
+properties:
+  code:
+    type: string
+    description: Код конфликта.
+    enum:
+      - RESERVATION_SLOT_CONFLICT
+      - COMPUTER_ALREADY_RESERVED
+      - VIP_ROOM_OCCUPIED
+  title:
+    type: string
+    description: Краткое описание.
+  resourceId:
+    type: string
+    format: uuid
+    description: Ресурс, с которым конфликт.
+  resourceType:
+    $ref: './ResourceType.yaml'
+  resourceCode:
+    type: string
+    description: Код ресурса.
+    example: PC-12
+  conflictingReservationId:
+    type: [string, 'null']
+    format: uuid
+    description: Существующая бронь, пересекающаяся с запросом.
+  conflictingPeriod:
+    type: object
+    description: Пересекающийся интервал существующей брони.
+    properties:
+      startAt:
+        type: string
+        format: date-time
+      endAt:
+        type: string
+        format: date-time
+  requestedStartAt:
+    type: string
+    format: date-time
+    description: Запрошенное начало.
+  requestedEndAt:
+    type: string
+    format: date-time
+    description: Запрошенное окончание.

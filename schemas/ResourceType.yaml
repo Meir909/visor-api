@@ -1,0 +1,5 @@
+type: string
+description: Тип резервируемого ресурса.
+enum:
+  - COMPUTER
+  - VIP_ROOM

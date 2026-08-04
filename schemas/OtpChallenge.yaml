@@ -1,0 +1,29 @@
+type: object
+description: Результат запроса OTP. Одноразовый challenge; код действует 5 минут.
+required:
+  - challengeId
+  - retryAfterSeconds
+  - expiresInSeconds
+properties:
+  challengeId:
+    type: string
+    format: uuid
+    description: Идентификатор challenge для последующей верификации.
+    example: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+  maskedPhone:
+    type: string
+    description: Маскированный телефон, например `+7 701 *** 78 90`. Не раскрывает факт существования пользователя.
+    example: +7 701 *** 78 90
+  retryAfterSeconds:
+    type: integer
+    minimum: 0
+    description: Минимальный интервал до повторной отправки (не менее 60 секунд).
+    example: 60
+  expiresInSeconds:
+    type: integer
+    minimum: 1
+    description: Срок действия кода (5 минут).
+    example: 300
+  devStaticCode:
+    type: [string, 'null']
+    description: Статический код для non-production среды. Возвращается только в dev и явно маркируется; в production поле отсутствует.

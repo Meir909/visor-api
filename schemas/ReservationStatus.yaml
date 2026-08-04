@@ -1,0 +1,24 @@
+type: string
+description: Статус бронирования.
+enum:
+  - DRAFT
+  - PENDING
+  - CONFIRMED
+  - CHECKED_IN
+  - ACTIVE
+  - COMPLETED
+  - CANCELLED
+  - EXPIRED
+  - NO_SHOW
+  - REJECTED
+x-enum-descriptions:
+  DRAFT: Черновик, создан без подтверждения.
+  PENDING: Ожидает подтверждения (оплата/депозит или администратор). Слот заблокирован.
+  CONFIRMED: Подтверждено, слот закреплён.
+  CHECKED_IN: Игрок прибыл, администратор подтвердил приход.
+  ACTIVE: Игровая сессия активна.
+  COMPLETED: Завершено штатно.
+  CANCELLED: Отменено (игроком или администратором до начала).
+  EXPIRED: Истекло до активации (hold timeout или ручное действие администратора).
+  NO_SHOW: Неявка, игрок не прибыл в льготный период.
+  REJECTED: Отклонено администратором.

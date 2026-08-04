@@ -1,0 +1,34 @@
+type: object
+description: Сведения о VIP-комнате в составе брони.
+required:
+  - roomId
+  - displayName
+  - seatCapacity
+properties:
+  roomId:
+    type: string
+    format: uuid
+    description: Идентификатор VIP-комнаты.
+  roomNumber:
+    type: [integer, 'null']
+    minimum: 1
+    description: Номер комнаты.
+  displayName:
+    type: string
+    description: Отображаемое имя.
+  seatCapacity:
+    type: integer
+    minimum: 1
+    description: Вместимость по участникам.
+  computerCount:
+    type: integer
+    minimum: 0
+    description: Количество компьютеров в комнате.
+  amenities:
+    type: array
+    description: Удобства.
+    items:
+      type: string
+    example:
+      - projector
+      - lounge
