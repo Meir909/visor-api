@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации). Остальные модули (Pricing, Notifications, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей). Остальные модули (Pricing, Notifications, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -802,7 +802,65 @@ tags:
 
       Рекомендации считаются на лету и не записываются.
 
+  - name: platform-admin
+    description: |-
+      # Суперадмин (PlatformAdmin)
+
+      Отдельный защищённый **cross-tenant** контур для поддержки платформы. Изолирован в собственный модуль (спека 11.5).
+
+      **Доступ:** роль `SUPER_ADMIN` (platform scope). Назначение — только break-glass: причина, audit record, временный срок.
+
+      ## Назначение привилегированного доступа
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant Admin as Platform Admin
+          participant S as Users
+          participant A as Audit
+          actor T as Target User
+          Admin->>S: POST /platform-admin/users/{id}/platform-roles<br/>{roleCode: SUPER_ADMIN, reason, validUntil}
+          S->>S: проверка причи+break-glass
+          S->>A: audit (actor=SUPER_ADMIN)
+          S-->>T: временный привилегированный доступ
+      ```
+
+      **Что доступно:**
+      - Платформенные роли и их назначение/отзыв.
+      - Cross-tenant управление организациями (suspend/reactivate/close).
+      - Глобальная статистика платформы.
+      - Поиск по аудит-логу (append-only, санитизированный).
+      - Поиск пользователей платформы.
+
+      **Ошибки:** `PLATFORM_ROLE_FORBIDDEN`, `PLATFORM_ROLE_ALREADY_ASSIGNED`, `PLATFORM_ROLE_NOT_FOUND`, `AUDIT_ENTRY_NOT_FOUND`.
+
 paths:
+  '/platform-admin/roles':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1roles'
+  '/platform-admin/users':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1users'
+  '/platform-admin/users/{userId}':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1users~1{userId}'
+  '/platform-admin/users/{userId}/platform-roles':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1users~1{userId}~1platform-roles'
+  '/platform-admin/users/{userId}/platform-roles/{assignmentId}':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1users~1{userId}~1platform-roles~1{assignmentId}'
+  '/platform-admin/organizations':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1organizations'
+  '/platform-admin/organizations/{organizationId}':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1organizations~1{organizationId}'
+  '/platform-admin/organizations/{organizationId}/suspend':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1organizations~1{organizationId}~1suspend'
+  '/platform-admin/organizations/{organizationId}/reactivate':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1organizations~1{organizationId}~1reactivate'
+  '/platform-admin/organizations/{organizationId}/close':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1organizations~1{organizationId}~1close'
+  '/platform-admin/stats/overview':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1stats~1overview'
+  '/platform-admin/audit-log':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1audit-log'
+  '/platform-admin/audit-log/{id}':
+    $ref: './paths/platform-admin.yaml#/~1platform-admin~1audit-log~1{id}'
   '/organizations/{organizationId}/owner/dashboard':
     $ref: './paths/owner.yaml#/~1organizations~1{organizationId}~1owner~1dashboard'
   '/organizations/{organizationId}/owner/network':
@@ -1283,6 +1341,22 @@ components:
       $ref: './schemas/StaffOverview.yaml'
     OwnerDashboard:
       $ref: './schemas/OwnerDashboard.yaml'
+    PlatformRoleCode:
+      $ref: './schemas/PlatformRoleCode.yaml'
+    PlatformRoleAssignment:
+      $ref: './schemas/PlatformRoleAssignment.yaml'
+    PlatformRoleAssignRequest:
+      $ref: './schemas/PlatformRoleAssignRequest.yaml'
+    PlatformUserSummary:
+      $ref: './schemas/PlatformUserSummary.yaml'
+    PlatformUser:
+      $ref: './schemas/PlatformUser.yaml'
+    PlatformOrganizationSnapshot:
+      $ref: './schemas/PlatformOrganizationSnapshot.yaml'
+    PlatformStatsOverview:
+      $ref: './schemas/PlatformStatsOverview.yaml'
+    AuditLogEntry:
+      $ref: './schemas/AuditLogEntry.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1390,6 +1464,24 @@ components:
       $ref: './components/parameters.yaml#/DiscountStatusQuery'
     RedemptionStatusQuery:
       $ref: './components/parameters.yaml#/RedemptionStatusQuery'
+    PlatformRoleQuery:
+      $ref: './components/parameters.yaml#/PlatformRoleQuery'
+    PlatformUserId:
+      $ref: './components/parameters.yaml#/PlatformUserId'
+    AssignmentId:
+      $ref: './components/parameters.yaml#/AssignmentId'
+    OrganizationStatusQuery:
+      $ref: './components/parameters.yaml#/OrganizationStatusQuery'
+    OrganizationIdQuery:
+      $ref: './components/parameters.yaml#/OrganizationIdQuery'
+    ActorUserIdQuery:
+      $ref: './components/parameters.yaml#/ActorUserIdQuery'
+    AuditActionQuery:
+      $ref: './components/parameters.yaml#/AuditActionQuery'
+    AuditEntityTypeQuery:
+      $ref: './components/parameters.yaml#/AuditEntityTypeQuery'
+    AuditLogEntryId:
+      $ref: './components/parameters.yaml#/AuditLogEntryId'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -1526,3 +1618,11 @@ components:
       $ref: './components/examples.yaml#/StaffOverviewExample'
     RecommendationsExample:
       $ref: './components/examples.yaml#/RecommendationsExample'
+    PlatformUserListExample:
+      $ref: './components/examples.yaml#/PlatformUserListExample'
+    PlatformOrganizationsListExample:
+      $ref: './components/examples.yaml#/PlatformOrganizationsListExample'
+    PlatformStatsOverviewExample:
+      $ref: './components/examples.yaml#/PlatformStatsOverviewExample'
+    AuditLogListExample:
+      $ref: './components/examples.yaml#/AuditLogListExample'

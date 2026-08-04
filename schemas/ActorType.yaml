@@ -4,3 +4,4 @@ enum:
   - USER
   - SYSTEM
   - PROVIDER
+  - SUPER_ADMIN

@@ -1,0 +1,61 @@
+type: object
+description: 'Детали пользователя в контуре платформенного администратора (платформенные роли и сводка memberships).'
+required:
+  - id
+  - displayName
+  - status
+  - createdAt
+  - platformRoles
+  - memberships
+properties:
+  id:
+    type: string
+    format: uuid
+    example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+  displayName:
+    type: string
+    example: Александр Петров
+  email:
+    type: [string, 'null']
+    format: email
+    example: alex@example.com
+  maskedPhone:
+    type: [string, 'null']
+    example: '+7 705 *** 12 34'
+  status:
+    $ref: './UserStatus.yaml'
+  createdAt:
+    type: string
+    format: date-time
+    example: '2026-05-01T08:00:00Z'
+  updatedAt:
+    type: string
+    format: date-time
+    example: '2026-07-01T12:00:00Z'
+  platformRoles:
+    type: array
+    description: Назначения платформенных ролей (активные и отозванные).
+    items:
+      $ref: './PlatformRoleAssignment.yaml'
+  memberships:
+    type: array
+    description: Memberships пользователя (tenant-скоупы).
+    items:
+      type: object
+      required:
+        - organizationId
+        - organizationName
+        - role
+        - status
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+          example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        organizationName:
+          type: string
+          example: Caspian Esports
+        role:
+          $ref: './RoleCode.yaml'
+        status:
+          $ref: './MembershipStatus.yaml'

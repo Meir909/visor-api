@@ -1,0 +1,5 @@
+type: string
+description: Платформенная роль (scope_type = PLATFORM). `PLAYER` назначается автоматически при создании пользователя; `SUPER_ADMIN` — только через break-glass назначение.
+enum:
+  - PLAYER
+  - SUPER_ADMIN

@@ -1,0 +1,45 @@
+type: object
+description: Результат поиска пользователя в контуре платформенного администратора.
+required:
+  - id
+  - displayName
+  - status
+  - createdAt
+  - platformRoleCodes
+  - hasPrivilegedAccess
+properties:
+  id:
+    type: string
+    format: uuid
+    example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+  displayName:
+    type: string
+    description: Отображаемое имя пользователя.
+    example: Александр Петров
+  email:
+    type: [string, 'null']
+    format: email
+    description: Email (скрытый/замаскированный при запросе от не-адресата).
+    example: alex@example.com
+  maskedPhone:
+    type: [string, 'null']
+    description: Замаскированный телефон.
+    example: '+7 705 *** 12 34'
+  status:
+    $ref: './UserStatus.yaml'
+  platformRoleCodes:
+    type: array
+    description: Платформенные роли пользователя.
+    items:
+      $ref: './PlatformRoleCode.yaml'
+    example:
+      - PLAYER
+      - SUPER_ADMIN
+  hasPrivilegedAccess:
+    type: boolean
+    description: Имеет ли пользователь активный привилегированный (SUPER_ADMIN) доступ.
+    example: true
+  createdAt:
+    type: string
+    format: date-time
+    example: '2026-05-01T08:00:00Z'

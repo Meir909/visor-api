@@ -1,0 +1,578 @@
+# =====================================================================
+# Visora API — Paths модуля PlatformAdmin (суперадмин, cross-tenant)
+# =====================================================================
+
+'/platform-admin/roles':
+  get:
+    tags:
+      - platform-admin
+    summary: Каталог платформенных ролей
+    operationId: listPlatformRoles
+    description: |-
+      Платформенные роли (scope_type = PLATFORM): `PLAYER` и `SUPER_ADMIN`.
+
+      **Правила:** только для актора с ролью `SUPER_ADMIN` (break-glass контур).
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Каталог платформенных ролей.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/PlatformRoleCode.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+
+'/platform-admin/users':
+  get:
+    tags:
+      - platform-admin
+    summary: Поиск пользователей платформы
+    operationId: searchPlatformUsers
+    description: |-
+      Поиск пользователей платформы с фильтром по статусу и платформенной роли.
+
+      **Правила:**
+      - Разрешение: `SUPER_ADMIN`.
+      - `q` — поиск по имени/email/телефону; `roleCode` — фильтр по платформенной роли.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/PlatformRoleQuery'
+      - $ref: '../components/parameters.yaml#/Q'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Найденные пользователи.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/PlatformUserSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              users:
+                $ref: '../components/examples.yaml#/PlatformUserListExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+
+'/platform-admin/users/{userId}':
+  get:
+    tags:
+      - platform-admin
+    summary: Детали пользователя платформы
+    operationId: getPlatformUser
+    description: |-
+      Полные детали пользователя: платформенные роли (с break-glass назначениями) и сводка memberships.
+
+      **Правила:** только для `SUPER_ADMIN`.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/PlatformUserId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Детали пользователя.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformUser.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/platform-admin/users/{userId}/platform-roles':
+  get:
+    tags:
+      - platform-admin
+    summary: Платформенные роли пользователя
+    operationId: listPlatformUserRoles
+    description: |-
+      Назначения платформенных ролей пользователя, включая отозванные и истёкшие.
+
+      **Правила:** только для `SUPER_ADMIN`.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/PlatformUserId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Назначения ролей.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/PlatformRoleAssignment.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+  post:
+    tags:
+      - platform-admin
+    summary: Назначить платформенную роль (break-glass)
+    operationId: assignPlatformRole
+    description: |-
+      Назначает пользователю платформенную роль. Назначение `SUPER_ADMIN` — привилегированное (break-glass).
+
+      **Правила:**
+      - Требуется `reason`; для `SUPER_ADMIN` рекомендуется `validUntil` (временный доступ).
+      - Назначение фиксируется в audit log с типом актора `SUPER_ADMIN`.
+      - Повторное активное назначение той же роли → `409 PLATFORM_ROLE_ALREADY_ASSIGNED`.
+      - Идемпотентность через `Idempotency-Key`.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/PlatformUserId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/PlatformRoleAssignRequest.yaml'
+          examples:
+            grantSuperAdmin:
+              value:
+                roleCode: SUPER_ADMIN
+                reason: Разблокировка пользователя и аудит инцидента по обращению
+                validUntil: '2026-08-05T11:00:00Z'
+    responses:
+      '201':
+        description: Роль назначена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformRoleAssignment.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/platform-admin/users/{userId}/platform-roles/{assignmentId}':
+  delete:
+    tags:
+      - platform-admin
+    summary: Отозвать платформенную роль
+    operationId: revokePlatformRole
+    description: |-
+      Отзывает назначение платформенной роли (`deleted_at`). Отозванное/истёкшее назначение не даёт доступа.
+
+      **Правила:**
+      - Нельзя отозвать собственную активную роль `SUPER_ADMIN` → `403 PLATFORM_ROLE_FORBIDDEN` (защита от полного само-лишения доступа при отсутствии другого SUPER_ADMIN).
+      - Отзыв фиксируется в audit log.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/PlatformUserId'
+      - $ref: '../components/parameters.yaml#/AssignmentId'
+      - $ref: '../components/parameters.yaml#/ReasonQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '204':
+        description: Роль отозвана.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/platform-admin/organizations':
+  get:
+    tags:
+      - platform-admin
+    summary: Список организаций платформы
+    operationId: listPlatformOrganizations
+    description: |-
+      Cross-tenant список всех организаций со статусами и ключевыми счётчиками.
+
+      **Правила:** только для `SUPER_ADMIN`. Фильтры по статусу и поиск `q`.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationStatusQuery'
+      - $ref: '../components/parameters.yaml#/Q'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Список организаций.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/PlatformOrganizationSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              organizations:
+                $ref: '../components/examples.yaml#/PlatformOrganizationsListExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+
+'/platform-admin/organizations/{organizationId}':
+  get:
+    tags:
+      - platform-admin
+    summary: Детали организации платформы
+    operationId: getPlatformOrganization
+    description: |-
+      Детальный снимок организации с метриками (клубы, участники, брони) для поддержки.
+
+      **Правила:** только для `SUPER_ADMIN`.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Детали организации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformOrganizationSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/platform-admin/organizations/{organizationId}/suspend':
+  post:
+    tags:
+      - platform-admin
+    summary: Приостановить организацию
+    operationId: platformSuspendOrganization
+    description: |-
+      Перевод `ACTIVE → SUSPENDED` силами суперадмина (флаг-поддержка, необходimo `reason`).
+
+      **Правила:**
+      - Действие записывается в audit log с типом актора `SUPER_ADMIN`.
+      - Идемпотентно: повторный suspend уже приостановленной организации возвращает 200.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationActionRequest.yaml'
+    responses:
+      '200':
+        description: Организация приостановлена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformOrganizationSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/platform-admin/organizations/{organizationId}/reactivate':
+  post:
+    tags:
+      - platform-admin
+    summary: Возобновить организацию
+    operationId: platformReactivateOrganization
+    description: |-
+      Перевод `SUSPENDED → ACTIVE` силами суперадмина. Восстанавливает возможность записи.
+
+      **Правила:** идемпотентно для ACTIVE; action логируется.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationActionRequest.yaml'
+    responses:
+      '200':
+        description: Организация возобновлена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformOrganizationSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/platform-admin/organizations/{organizationId}/close':
+  post:
+    tags:
+      - platform-admin
+    summary: Закрыть организацию
+    operationId: platformCloseOrganization
+    description: |-
+      Мягкое закрытие организации силами суперадмина (status → `CLOSED`, soft-delete). **Необратимо.**
+
+      **Правила:**
+      - Требуется `reason`; action логируется с типом актора `SUPER_ADMIN`.
+      - Организация с активными будущими бронями → `409` (сначала закрыть/отменить).
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationActionRequest.yaml'
+    responses:
+      '200':
+        description: Организация закрыта.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformOrganizationSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/platform-admin/stats/overview':
+  get:
+    tags:
+      - platform-admin
+    summary: Глобальная статистика платформы
+    operationId: getPlatformStats
+    description: |-
+      Глобальные счётчики платформы: пользователи, организации, клубы, бронирования и привилегированные доступы.
+
+      **Правила:** только для `SUPER_ADMIN`. Данные — агрегаты/материализованные счётчики, не операционные сканы.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Статистика платформы.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PlatformStatsOverview.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              stats:
+                $ref: '../components/examples.yaml#/PlatformStatsOverviewExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+
+'/platform-admin/audit-log':
+  get:
+    tags:
+      - platform-admin
+    summary: Поиск по аудит-логу
+    operationId: searchAuditLog
+    description: |-
+      Cross-tenant поиск по аудит-логу (append-only). Фильтры: организация, исполнитель, действие, тип объекта, период.
+
+      **Правила:**
+      - Только для `SUPER_ADMIN`.
+      - Данные read-only; запись нельзя изменять.
+      - `oldValue`/`newValue` в ответе санитизированы (PII/секреты вырезаны).
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationIdQuery'
+      - $ref: '../components/parameters.yaml#/ActorUserIdQuery'
+      - $ref: '../components/parameters.yaml#/AuditActionQuery'
+      - $ref: '../components/parameters.yaml#/AuditEntityTypeQuery'
+      - $ref: '../components/parameters.yaml#/From'
+      - $ref: '../components/parameters.yaml#/To'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Записи аудит-лога.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/AuditLogEntry.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              audit:
+                $ref: '../components/examples.yaml#/AuditLogListExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+
+'/platform-admin/audit-log/{id}':
+  get:
+    tags:
+      - platform-admin
+    summary: Детали записи аудит-лога
+    operationId: getAuditLogEntry
+    description: |-
+      Полная запись аудит-лога, включая санитизированные `oldValue`/`newValue`.
+
+      **Правила:** только для `SUPER_ADMIN`; запись неизменяема.
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/AuditLogEntryId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Запись аудит-лога.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/AuditLogEntry.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'

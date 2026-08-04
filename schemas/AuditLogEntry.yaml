@@ -1,0 +1,81 @@
+type: object
+description: Запись аудит-лога (append-only). Хранит, кто, когда и против какого объекта совершил действие и что изменилось.
+required:
+  - id
+  - organizationId
+  - actorType
+  - action
+  - entityType
+  - entityId
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    example: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+  organizationId:
+    type: [string, 'null']
+    format: uuid
+    description: Tenant действия (обязателен даже для действий суперадмина против tenant-данных).
+    example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+  clubId:
+    type: [string, 'null']
+    format: uuid
+    description: Связанный клуб или null.
+    example: null
+  actorUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Пользователь-исполнитель (null для SYSTEM/PROVIDER).
+    example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+  actorType:
+    $ref: './ActorType.yaml'
+  action:
+    type: string
+    maxLength: 80
+    description: Стабильный код действия (например `club.suspend`, `member.role.update`).
+    example: organization.suspend
+  entityType:
+    type: string
+    maxLength: 80
+    description: Логический тип затронутого объекта.
+    example: organization
+  entityId:
+    type: string
+    format: uuid
+    description: Идентификатор затронутого объекта (не является внешним ключом).
+    example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+  oldValue:
+    description: Санитизированное состояние «до» (PII и секреты вырезаны).
+    type: [object, 'null']
+    example:
+      status: ACTIVE
+  newValue:
+    description: Санитизированное состояние «после».
+    type: [object, 'null']
+    example:
+      status: SUSPENDED
+  reason:
+    type: [string, 'null']
+    maxLength: 500
+    description: Причина действия.
+    example: Запрос правоохранительных органов
+  correlationId:
+    type: [string, 'null']
+    format: uuid
+    description: Трейс-correlation запроса.
+    example: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+  requestId:
+    type: [string, 'null']
+    maxLength: 100
+    description: ID API-запроса.
+    example: req_8f9a0b1c
+  ipAddress:
+    type: [string, 'null']
+    description: IP-адрес исполнителя.
+    example: 185.18.52.10
+  createdAt:
+    type: string
+    format: date-time
+    description: Время действия.
+    example: '2026-08-04T11:20:00Z'

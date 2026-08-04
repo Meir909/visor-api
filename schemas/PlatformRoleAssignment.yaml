@@ -1,0 +1,57 @@
+type: object
+description: Назначение платформенной роли пользователю (таблица `platform_role_assignments`). Привилегированные назначения (SUPER_ADMIN) — break-glass.
+required:
+  - id
+  - userId
+  - roleCode
+  - assignedByUserId
+  - assignedReason
+  - isExpired
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор назначения.
+    example: b1c2d3e4-5f6a-4b7c-8d9e-0f1a2b3c4d5e
+  userId:
+    type: string
+    format: uuid
+    description: Пользователь, получивший платформенную роль.
+    example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+  roleCode:
+    $ref: './PlatformRoleCode.yaml'
+  assignedByUserId:
+    type: string
+    format: uuid
+    description: Платформенный актор, назначивший роль.
+    example: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+  assignedReason:
+    type: string
+    maxLength: 240
+    description: Причина назначения (обязательна для привилегированных ролей).
+    example: Разблокировка пользователя и аудит инцидента по обращению
+  validUntil:
+    type: [string, 'null']
+    format: date-time
+    description: Опциональный срок окончания временного доступа.
+    example: '2026-08-05T11:00:00Z'
+  isExpired:
+    type: boolean
+    description: Истёк ли временный доступ (validUntil в прошлом) или назначение отозвано.
+    example: false
+  createdAt:
+    type: string
+    format: date-time
+    description: Время назначения.
+    example: '2026-08-04T11:15:00Z'
+  updatedAt:
+    type: string
+    format: date-time
+    example: '2026-08-04T11:15:00Z'
+  revokedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время отзыва (для отозванных назначений).
+    example: null

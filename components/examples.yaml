@@ -1719,3 +1719,132 @@ RecommendationsExample:
     meta:
       requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
       timestamp: '2026-08-04T11:00:00Z'
+
+PlatformUserListExample:
+  summary: Поиск пользователей платформы
+  value:
+    data:
+      - id: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        displayName: Александр Петров
+        email: alex@example.com
+        maskedPhone: '+7 705 *** 12 34'
+        status: ACTIVE
+        platformRoleCodes:
+          - PLAYER
+          - SUPER_ADMIN
+        hasPrivilegedAccess: true
+        createdAt: '2026-05-01T08:00:00Z'
+      - id: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+        displayName: Айгерим Нурланова
+        email: aigerim@arena.kz
+        maskedPhone: '+7 701 *** 55 88'
+        status: ACTIVE
+        platformRoleCodes:
+          - PLAYER
+        hasPrivilegedAccess: false
+        createdAt: '2026-05-02T09:00:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+PlatformOrganizationsListExample:
+  summary: Список организаций платформы
+  value:
+    data:
+      - id: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        slug: caspian-esports
+        name: Caspian Esports
+        status: ACTIVE
+        clubCount: 2
+        memberCount: 7
+        reservationCount: 4320
+        lastActivityAt: '2026-08-04T10:50:00Z'
+        createdAt: '2026-05-01T08:00:00Z'
+      - id: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+        slug: pixel-lab
+        name: Pixel Lab KZ
+        status: SUSPENDED
+        clubCount: 1
+        memberCount: 3
+        reservationCount: 0
+        lastActivityAt: '2026-08-01T12:00:00Z'
+        createdAt: '2026-06-10T10:00:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+PlatformStatsOverviewExample:
+  summary: Глобальная статистика платформы
+  value:
+    data:
+      generatedAt: '2026-08-04T11:30:00Z'
+      users:
+        total: 15420
+        active: 12100
+        blocked: 38
+        privileged: 2
+      organizations:
+        total: 830
+        active: 720
+        suspended: 22
+        closed: 88
+      clubs:
+        total: 1104
+        active: 980
+      reservations:
+        total: 3120
+        active: 640
+        today: 2190
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T11:30:00Z'
+
+AuditLogListExample:
+  summary: Записи аудит-лога
+  value:
+    data:
+      - id: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId: null
+        actorUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        actorType: SUPER_ADMIN
+        action: organization.suspend
+        entityType: organization
+        entityId: 7b1f8c3e-4a2b-4c3d-9e4f-5a6b7c8d9e0f
+        oldValue:
+          status: ACTIVE
+        newValue:
+          status: SUSPENDED
+        reason: Запрос правоохранительных органов
+        correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+        requestId: req_8f9a0b1c
+        ipAddress: 185.18.52.10
+        createdAt: '2026-08-04T11:20:00Z'
+      - id: d3e4f5a6-7b8c-4d9e-0f1a-2b3c4d5e6f70
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        actorUserId: 6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e
+        actorType: USER
+        action: member.role.update
+        entityType: membership
+        entityId: e1f2a3b4-5c6d-4e7f-8a9b-0c1d2e3f4a5b
+        oldValue:
+          roles:
+            - { code: CLUB_ADMIN }
+        newValue:
+          roles:
+            - { code: ORG_OWNER }
+        reason: Передача владения организации
+        correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+        requestId: req_7e8f9a0b
+        ipAddress: 91.102.44.12
+        createdAt: '2026-08-04T09:30:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false

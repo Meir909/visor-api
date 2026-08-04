@@ -1,0 +1,81 @@
+type: object
+description: Глобальные счётчики платформы для суперадмина.
+required:
+  - generatedAt
+  - users
+  - organizations
+  - clubs
+  - reservations
+properties:
+  generatedAt:
+    type: string
+    format: date-time
+    description: Время формирования.
+    example: '2026-08-04T11:30:00Z'
+  users:
+    type: object
+    required:
+      - total
+      - active
+    properties:
+      total:
+        type: integer
+        example: 15420
+      active:
+        type: integer
+        example: 12100
+      blocked:
+        type: integer
+        example: 38
+      privileged:
+        type: integer
+        description: Активных SUPER_ADMIN по платформе.
+        example: 2
+  organizations:
+    type: object
+    required:
+      - total
+      - active
+    properties:
+      total:
+        type: integer
+        example: 830
+      active:
+        type: integer
+        example: 720
+      suspended:
+        type: integer
+        example: 22
+      closed:
+        type: integer
+        example: 88
+  clubs:
+    type: object
+    required:
+      - total
+      - active
+    properties:
+      total:
+        type: integer
+        example: 1104
+      active:
+        type: integer
+        example: 980
+  reservations:
+    type: object
+    required:
+      - total
+      - active
+    properties:
+      total:
+        type: integer
+        description: Бронирований за последние 24 часа.
+        example: 3120
+      active:
+        type: integer
+        description: Активных сейчас (CHECKED_IN/ACTIVE).
+        example: 640
+      today:
+        type: integer
+        description: Бронирований за сегодня.
+        example: 2190

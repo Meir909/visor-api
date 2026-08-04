@@ -1,0 +1,19 @@
+type: object
+description: Назначение платформенной роли (break-glass) пользователю.
+required:
+  - roleCode
+  - reason
+properties:
+  roleCode:
+    $ref: './PlatformRoleCode.yaml'
+  reason:
+    type: string
+    minLength: 1
+    maxLength: 240
+    description: Причина назначения. Обязательна для привилегированных ролей (SUPER_ADMIN); фиксируется в audit log.
+    example: Разблокировка пользователя и аудит инцидента по обращению
+  validUntil:
+    type: string
+    format: date-time
+    description: Опциональный срок окончания временного доступа (рекомендуется для SUPER_ADMIN).
+    example: '2026-08-05T11:00:00Z'

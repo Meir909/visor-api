@@ -1,0 +1,42 @@
+type: object
+description: Снимок организации в контуре платформенного администратора (cross-tenant).
+required:
+  - id
+  - slug
+  - name
+  - status
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+  slug:
+    type: string
+    example: caspian-esports
+  name:
+    type: string
+    example: Caspian Esports
+  status:
+    $ref: './OrganizationStatus.yaml'
+  clubCount:
+    type: integer
+    description: Количество клубов.
+    example: 2
+  memberCount:
+    type: integer
+    description: Количество участников.
+    example: 7
+  reservationCount:
+    type: integer
+    description: Количество бронирований за период.
+    example: 4320
+  lastActivityAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время последней активности в организации.
+    example: '2026-08-04T10:50:00Z'
+  createdAt:
+    type: string
+    format: date-time
+    example: '2026-05-01T08:00:00Z'
