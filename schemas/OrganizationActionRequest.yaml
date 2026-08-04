@@ -1,0 +1,10 @@
+type: object
+description: Действие жизненного цикла организации (suspend / reactivate / close). Для suspend/close требуется причина.
+required:
+  - reason
+properties:
+  reason:
+    type: string
+    maxLength: 240
+    description: Причина действия. Обязательна для suspend и close; аудируется.
+    example: Переезд в новое здание

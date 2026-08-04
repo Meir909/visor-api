@@ -1,0 +1,57 @@
+type: object
+description: Организация — tenant и граница владения клубами и бизнес-данными. Не является ролью; роли пользователь получает через membership организации.
+required:
+  - id
+  - name
+  - slug
+  - status
+  - defaultCurrency
+  - defaultTimezone
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор организации (tenant).
+  name:
+    type: string
+    maxLength: 160
+    description: Юридическое или отображаемое название.
+  slug:
+    type: string
+    maxLength: 100
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$'
+    description: Стабильный tenant-идентификатор (lowercase, `[a-z0-9-]`, уникален среди активных).
+    example: caspian-esports
+  status:
+    $ref: './OrganizationStatus.yaml'
+  defaultCurrency:
+    type: string
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    description: ISO 4217; MVP default `KZT`.
+    example: KZT
+  defaultTimezone:
+    type: string
+    maxLength: 64
+    description: IANA time zone (fallback для клубов без собственной).
+    example: Asia/Almaty
+  settings:
+    $ref: './OrganizationSettings.yaml'
+  clubsCount:
+    type: integer
+    minimum: 0
+    description: Количество активных клубов (агрегат для дашборда).
+    example: 2
+  membersCount:
+    type: integer
+    minimum: 0
+    description: Количество активных участников (агрегат для дашборда).
+    example: 7
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

@@ -1,0 +1,21 @@
+type: object
+description: Обновление реквизитов организации. Незаполненные поля не изменяются. Смена `slug` и `defaultCurrency` аудируется.
+properties:
+  name:
+    type: string
+    maxLength: 160
+    description: Название организации.
+  slug:
+    type: string
+    maxLength: 100
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$'
+    description: Уникальный tenant-идентификатор. Занят → `409 ORGANIZATION_SLUG_TAKEN`.
+  defaultCurrency:
+    type: string
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    description: ISO 4217.
+  defaultTimezone:
+    type: string
+    maxLength: 64
+    description: IANA time zone.

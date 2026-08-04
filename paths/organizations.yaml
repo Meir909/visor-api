@@ -1,0 +1,442 @@
+# =====================================================================
+# Visora API — Paths модуля Organizations (tenant lifecycle)
+# =====================================================================
+
+'/organizations':
+  post:
+    tags:
+      - organizations
+    summary: Создать организацию
+    operationId: createOrganization
+    description: |-
+      Создаёт организацию (tenant) и в той же транзакции membership вызывающего с ролью `ORG_OWNER`.
+
+      **Разрешение:** `organization.create` (доступно всем аутентифицированным).
+
+      **Правила:**
+      - `slug` уникален среди активных организаций → занят = `409 ORGANIZATION_SLUG_TAKEN`.
+      - `slug` lowercase `[a-z0-9-]`; неверный формат = `422 INVALID_SLUG`.
+      - `defaultCurrency` — ISO 4217 (MVP `KZT`), `defaultTimezone` — IANA.
+      - Аудит: создание tenant и первичного Owner.
+
+      **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+    parameters:
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationCreateRequest.yaml'
+          examples:
+            createOrg:
+              $ref: '../components/examples.yaml#/OrganizationCreateExample'
+    responses:
+      '201':
+        description: Организация создана; вызывающий — ORG_OWNER.
+        headers:
+          Location:
+            description: URL созданной организации.
+            schema:
+              type: string
+              format: uri-reference
+            example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Organization.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/OrganizationExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+  get:
+    tags:
+      - organizations
+    summary: Мои организации
+    operationId: getMyOrganizations
+    description: |
+      Список организаций, в которых состоит текущий пользователь, с его наивысшей ролью. Эквивалентно `/me/memberships` + данные организации.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Мои организации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/OrganizationSummary.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              myOrgs:
+                $ref: '../components/examples.yaml#/OrganizationListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+
+'/organizations/slug-availability':
+  get:
+    tags:
+      - organizations
+    summary: Проверить доступность slug
+    operationId: checkSlugAvailability
+    description: |
+      Проверяет, свободен ли slug для создания организации. Публичный (не требует membership): используется в онбординге до создания.
+    security: []
+    parameters:
+      - $ref: '../components/parameters.yaml#/SlugQuery'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Доступность slug.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  $ref: '../schemas/SlugAvailability.yaml'
+            examples:
+              availability:
+                $ref: '../components/examples.yaml#/SlugAvailabilityExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}':
+  get:
+    tags:
+      - organizations
+    summary: Детали организации
+    operationId: getOrganization
+    description: |
+      Возвращает организацию с агрегатами (`clubsCount`, `membersCount`) для дашборда.
+
+      **Разрешение:** член организации (`membership` ACTIVE). Объём данных зависит от роли: полный вид — ORG_OWNER.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Детали организации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Organization.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              organization:
+                $ref: '../components/examples.yaml#/OrganizationExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  patch:
+    tags:
+      - organizations
+    summary: Обновить организацию
+    operationId: updateOrganization
+    description: |-
+      Обновляет реквизиты организации.
+
+      **Разрешение:** `organization.manage` (ORG_OWNER).
+
+      **Правила:**
+      - Смена `slug` — проверка уникальности (`409 ORGANIZATION_SLUG_TAKEN`).
+      - Смена `defaultCurrency`/`defaultTimezone` влияет на новые клубы и расчёты.
+      - `status` здесь не меняется — используется lifecycle endpoints (`suspend`/`reactivate`/`close`).
+      - Изменения аудируются (before/after diff).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationUpdateRequest.yaml'
+          examples:
+            updateOrg:
+              value:
+                name: Caspian Esports (KZ)
+                defaultTimezone: Asia/Almaty
+    responses:
+      '200':
+        description: Организация обновлена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Organization.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/settings':
+  get:
+    tags:
+      - organizations
+    summary: Настройки организации
+    operationId: getOrganizationSettings
+    description: |
+      Organization-level настройки (jsonb). Клубная политика бронирования (горизонт, grace, cutoff) — в модуле Clubs.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Настройки организации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/OrganizationSettings.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              settings:
+                $ref: '../components/examples.yaml#/SettingsExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  patch:
+    tags:
+      - organizations
+    summary: Обновить настройки организации
+    operationId: updateOrganizationSettings
+    description: |
+      Обновляет organization-level настройки (deep merge по объекту). Применяется к новым клубам; существующие клубы сохраняют собственные значения, если не переопределены.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationSettingsUpdateRequest.yaml'
+          examples:
+            updateSettings:
+              value:
+                notificationDefaults:
+                  reminderLeadMinutes:
+                    - 360
+                    - 180
+                    - 30
+    responses:
+      '200':
+        description: Настройки обновлены.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/OrganizationSettings.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/suspend':
+  post:
+    tags:
+      - organizations
+    summary: Приостановить организацию
+    operationId: suspendOrganization
+    description: |-
+      Переводит организацию в `SUSPENDED`: блокируются tenant-записи (создание броней, изменение клубов), данные сохраняются.
+
+      **Разрешение:** `organization.manage` (ORG_OWNER). Для приостановки требуется причина.
+
+      После suspend все активные сессии участников продолжают действовать, но операции записи в tenant возвращают `423/422 ORGANIZATION_SUSPENDED`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationActionRequest.yaml'
+          examples:
+            suspend:
+              value:
+                reason: Переезд в новое здание
+    responses:
+      '200':
+        description: Организация приостановлена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Organization.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/organizations/{organizationId}/reactivate':
+  post:
+    tags:
+      - organizations
+    summary: Возобновить организацию
+    operationId: reactivateOrganization
+    description: |
+      Переводит `SUSPENDED` → `ACTIVE`. Восстанавливает возможность записи. Действует только для приостановленной организации; для ACTIVE — идемпотентный 200.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+                maxLength: 240
+      description: Опциональная причина возобновления.
+    responses:
+      '200':
+        description: Организация возобновлена.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Organization.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/close':
+  post:
+    tags:
+      - organizations
+    summary: Закрыть организацию
+    operationId: closeOrganization
+    description: |-
+      Мягко удаляет организацию (status → `CLOSED`, soft-delete). **Необратимо.**
+
+      **Правила:**
+      - Организация с активными бронями в будущем — `409` (требуется сначала закрыть/отменить).
+      - Все memberships переводятся в `REVOKED`; сессии участников теряют доступ к tenant.
+      - Требуется причина; фиксируется в audit log.
+
+      **Идемпотентность:** повторный close закрытой организации возвращает 200.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/OrganizationActionRequest.yaml'
+          examples:
+            close:
+              value:
+                reason: Компания закрыта
+    responses:
+      '200':
+        description: Организация закрыта.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Organization.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'

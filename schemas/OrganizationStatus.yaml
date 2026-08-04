@@ -1,0 +1,7 @@
+type: string
+description: Статус организации (tenant). `CLOSED` необратим (soft-delete); `SUSPENDED` блокирует запись, но данные сохраняются.
+enum:
+  - ACTIVE
+  - SUSPENDED
+  - CLOSED
+example: ACTIVE

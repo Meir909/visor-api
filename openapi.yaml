@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии) и **Roles** (RBAC: владелец → админ → игрок). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок) и **Organizations** (tenant lifecycle). Остальные модули (Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -421,7 +421,73 @@ tags:
 
       Все изменения ролей/статусов аудируются (actor, tenant, before/after diff, IP, correlation id).
 
+  - name: organizations
+    description: |-
+      # Организации (tenant lifecycle)
+
+      Организация — **tenant** и граница владения клубами и бизнес-данными. Не является ролью: пользователь получает роль через membership организации (модуль Roles).
+
+      **Жизненный цикл:**
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> ACTIVE: create (owner membership auto-created)
+          ACTIVE --> SUSPENDED: suspend (причина, аудит)
+          SUSPENDED --> ACTIVE: reactivate
+          ACTIVE --> CLOSED: close (необратимо, soft-delete)
+          SUSPENDED --> CLOSED: close
+          CLOSED --> [*]
+      ```
+
+      **Правила:**
+      - Создание организации в одной транзакции создаёт membership вызывающего с ролью `ORG_OWNER`.
+      - `slug` уникален среди активных организаций (lowercase `[a-z0-9-]`).
+      - `SUSPENDED` блокирует tenant-записи (`ORGANIZATION_SUSPENDED`), данные сохраняются.
+      - `CLOSED` необратим; закрытие с будущими активными бронями — `409`.
+      - Клубная политика бронирования (горизонт, grace, cutoff) живёт в модуле Clubs, а не здесь.
+
+      ## Последовательность создания организации
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant U as User (Next.js)
+          participant API as Visora API
+          participant SVC as Organization Service
+          participant DB as PostgreSQL
+          participant RBAC as Roles
+
+          U->>API: POST /api/v1/organizations (Idempotency-Key)
+          API->>SVC: CreateOrganizationCommand
+          SVC->>SVC: validate slug + currency + timezone
+          SVC->>DB: BEGIN → INSERT organization + owner membership → COMMIT
+          SVC-->>API: Organization
+          API-->>U: 201 Created (Location)
+      ```
+
+      ## Разрешения
+
+      | Действие | Permission / роль |
+      |---|---|
+      | Создать организацию | `organization.create` (любой аутентифицированный) |
+      | Читать организацию | member организации (`membership` ACTIVE) |
+      | Обновить, suspend, close | `organization.manage` (ORG_OWNER) |
+
 paths:
+  '/organizations':
+    $ref: './paths/organizations.yaml#/~1organizations'
+  '/organizations/slug-availability':
+    $ref: './paths/organizations.yaml#/~1organizations~1slug-availability'
+  '/organizations/{organizationId}':
+    $ref: './paths/organizations.yaml#/~1organizations~1{organizationId}'
+  '/organizations/{organizationId}/settings':
+    $ref: './paths/organizations.yaml#/~1organizations~1{organizationId}~1settings'
+  '/organizations/{organizationId}/suspend':
+    $ref: './paths/organizations.yaml#/~1organizations~1{organizationId}~1suspend'
+  '/organizations/{organizationId}/reactivate':
+    $ref: './paths/organizations.yaml#/~1organizations~1{organizationId}~1reactivate'
+  '/organizations/{organizationId}/close':
+    $ref: './paths/organizations.yaml#/~1organizations~1{organizationId}~1close'
   '/roles':
     $ref: './paths/roles.yaml#/~1roles'
   '/me/roles':
@@ -626,6 +692,24 @@ components:
       $ref: './schemas/MyAccess.yaml'
     InvitationSummary:
       $ref: './schemas/InvitationSummary.yaml'
+    OrganizationStatus:
+      $ref: './schemas/OrganizationStatus.yaml'
+    Organization:
+      $ref: './schemas/Organization.yaml'
+    OrganizationSummary:
+      $ref: './schemas/OrganizationSummary.yaml'
+    OrganizationCreateRequest:
+      $ref: './schemas/OrganizationCreateRequest.yaml'
+    OrganizationUpdateRequest:
+      $ref: './schemas/OrganizationUpdateRequest.yaml'
+    OrganizationSettings:
+      $ref: './schemas/OrganizationSettings.yaml'
+    OrganizationSettingsUpdateRequest:
+      $ref: './schemas/OrganizationSettingsUpdateRequest.yaml'
+    OrganizationActionRequest:
+      $ref: './schemas/OrganizationActionRequest.yaml'
+    SlugAvailability:
+      $ref: './schemas/SlugAvailability.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -685,6 +769,8 @@ components:
       $ref: './components/parameters.yaml#/RoleQuery'
     ReasonQuery:
       $ref: './components/parameters.yaml#/ReasonQuery'
+    SlugQuery:
+      $ref: './components/parameters.yaml#/SlugQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -741,3 +827,13 @@ components:
       $ref: './components/examples.yaml#/MembersListExample'
     InvitationExample:
       $ref: './components/examples.yaml#/InvitationExample'
+    OrganizationCreateExample:
+      $ref: './components/examples.yaml#/OrganizationCreateExample'
+    OrganizationExample:
+      $ref: './components/examples.yaml#/OrganizationExample'
+    OrganizationListExample:
+      $ref: './components/examples.yaml#/OrganizationListExample'
+    SettingsExample:
+      $ref: './components/examples.yaml#/SettingsExample'
+    SlugAvailabilityExample:
+      $ref: './components/examples.yaml#/SlugAvailabilityExample'

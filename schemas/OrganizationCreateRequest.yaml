@@ -1,0 +1,30 @@
+type: object
+description: Создание организации. В той же транзакции создаётся membership вызывающего с ролью `ORG_OWNER`.
+required:
+  - name
+  - slug
+properties:
+  name:
+    type: string
+    maxLength: 160
+    description: Название организации.
+    example: Caspian Esports
+  slug:
+    type: string
+    maxLength: 100
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$'
+    description: |
+      Уникальный tenant-идентификатор (lowercase, `[a-z0-9-]`).
+      Занят → `409 ORGANIZATION_SLUG_TAKEN`; неверный формат → `422 INVALID_SLUG`.
+    example: caspian-esports
+  defaultCurrency:
+    type: string
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    description: ISO 4217; default `KZT`.
+    default: KZT
+  defaultTimezone:
+    type: string
+    maxLength: 64
+    description: IANA time zone; default `Asia/Almaty`.
+    default: Asia/Almaty

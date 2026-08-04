@@ -1,0 +1,34 @@
+type: object
+description: Краткое представление организации для списков (например, `/me/organizations`).
+required:
+  - id
+  - name
+  - slug
+  - status
+  - defaultCurrency
+  - defaultTimezone
+properties:
+  id:
+    type: string
+    format: uuid
+  name:
+    type: string
+    maxLength: 160
+  slug:
+    type: string
+    maxLength: 100
+  status:
+    $ref: './OrganizationStatus.yaml'
+  defaultCurrency:
+    type: string
+    maxLength: 3
+  defaultTimezone:
+    type: string
+    maxLength: 64
+  myRole:
+    $ref: './RoleCode.yaml'
+    description: Моя наивысшая роль в этой организации.
+  clubsCount:
+    type: integer
+    minimum: 0
+    example: 2

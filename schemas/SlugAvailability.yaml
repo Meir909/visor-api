@@ -1,0 +1,17 @@
+type: object
+description: Результат проверки доступности slug.
+required:
+  - slug
+  - available
+properties:
+  slug:
+    type: string
+    maxLength: 100
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$'
+  available:
+    type: boolean
+    description: Свободен ли slug для создания организации.
+  suggestion:
+    type: [string, 'null']
+    maxLength: 100
+    description: Рекомендуемая альтернатива, если занят.

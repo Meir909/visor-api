@@ -543,3 +543,83 @@ InvitationExample:
     meta:
       requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
       timestamp: '2026-08-04T10:31:00Z'
+
+OrganizationCreateExample:
+  summary: Создание организации
+  value:
+    name: Caspian Esports
+    slug: caspian-esports
+    defaultCurrency: KZT
+    defaultTimezone: Asia/Almaty
+
+OrganizationExample:
+  summary: Детали организации
+  value:
+    data:
+      id: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      name: Caspian Esports
+      slug: caspian-esports
+      status: ACTIVE
+      defaultCurrency: KZT
+      defaultTimezone: Asia/Almaty
+      settings:
+        onboardingComplete: true
+        notificationDefaults:
+          locale: ru-KZ
+          reminderLeadMinutes:
+            - 180
+            - 30
+      clubsCount: 2
+      membersCount: 7
+      createdAt: '2026-07-01T09:00:00Z'
+      updatedAt: '2026-08-04T10:35:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:35:00Z'
+
+OrganizationListExample:
+  summary: Мои организации
+  value:
+    data:
+      - id: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        name: Caspian Esports
+        slug: caspian-esports
+        status: ACTIVE
+        defaultCurrency: KZT
+        defaultTimezone: Asia/Almaty
+        myRole: ORG_OWNER
+        clubsCount: 2
+      - id: 7f6e5d4c-3b2a-4c1d-8e9f-0a1b2c3d4e5f
+        name: Astana Arena
+        slug: astana-arena
+        status: ACTIVE
+        defaultCurrency: KZT
+        defaultTimezone: Asia/Almaty
+        myRole: CLUB_ADMIN
+        clubsCount: 1
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:35:00Z'
+
+SettingsExample:
+  summary: Настройки организации
+  value:
+    data:
+      onboardingComplete: true
+      notificationDefaults:
+        locale: ru-KZ
+        reminderLeadMinutes:
+          - 180
+          - 30
+      invoicePrefix: CE
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:35:00Z'
+
+SlugAvailabilityExample:
+  summary: Проверка доступности slug
+  value:
+    data:
+      slug: caspian-esports
+      available: false
+      suggestion: caspian-esports-2

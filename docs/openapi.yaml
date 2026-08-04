@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии) и **Roles** (RBAC: владелец → админ → игрок). Остальные модули (Organizations, Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок) и **Organizations** (tenant lifecycle). Остальные модули (Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -412,7 +412,506 @@ tags:
       ```
 
       Все изменения ролей/статусов аудируются (actor, tenant, before/after diff, IP, correlation id).
+  - name: organizations
+    description: |-
+      # Организации (tenant lifecycle)
+
+      Организация — **tenant** и граница владения клубами и бизнес-данными. Не является ролью: пользователь получает роль через membership организации (модуль Roles).
+
+      **Жизненный цикл:**
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> ACTIVE: create (owner membership auto-created)
+          ACTIVE --> SUSPENDED: suspend (причина, аудит)
+          SUSPENDED --> ACTIVE: reactivate
+          ACTIVE --> CLOSED: close (необратимо, soft-delete)
+          SUSPENDED --> CLOSED: close
+          CLOSED --> [*]
+      ```
+
+      **Правила:**
+      - Создание организации в одной транзакции создаёт membership вызывающего с ролью `ORG_OWNER`.
+      - `slug` уникален среди активных организаций (lowercase `[a-z0-9-]`).
+      - `SUSPENDED` блокирует tenant-записи (`ORGANIZATION_SUSPENDED`), данные сохраняются.
+      - `CLOSED` необратим; закрытие с будущими активными бронями — `409`.
+      - Клубная политика бронирования (горизонт, grace, cutoff) живёт в модуле Clubs, а не здесь.
+
+      ## Последовательность создания организации
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant U as User (Next.js)
+          participant API as Visora API
+          participant SVC as Organization Service
+          participant DB as PostgreSQL
+          participant RBAC as Roles
+
+          U->>API: POST /api/v1/organizations (Idempotency-Key)
+          API->>SVC: CreateOrganizationCommand
+          SVC->>SVC: validate slug + currency + timezone
+          SVC->>DB: BEGIN → INSERT organization + owner membership → COMMIT
+          SVC-->>API: Organization
+          API-->>U: 201 Created (Location)
+      ```
+
+      ## Разрешения
+
+      | Действие | Permission / роль |
+      |---|---|
+      | Создать организацию | `organization.create` (любой аутентифицированный) |
+      | Читать организацию | member организации (`membership` ACTIVE) |
+      | Обновить, suspend, close | `organization.manage` (ORG_OWNER) |
 paths:
+  /organizations:
+    post:
+      tags:
+        - organizations
+      summary: Создать организацию
+      operationId: createOrganization
+      description: |-
+        Создаёт организацию (tenant) и в той же транзакции membership вызывающего с ролью `ORG_OWNER`.
+
+        **Разрешение:** `organization.create` (доступно всем аутентифицированным).
+
+        **Правила:**
+        - `slug` уникален среди активных организаций → занят = `409 ORGANIZATION_SLUG_TAKEN`.
+        - `slug` lowercase `[a-z0-9-]`; неверный формат = `422 INVALID_SLUG`.
+        - `defaultCurrency` — ISO 4217 (MVP `KZT`), `defaultTimezone` — IANA.
+        - Аудит: создание tenant и первичного Owner.
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationCreateRequest'
+            examples:
+              createOrg:
+                $ref: '#/components/examples/OrganizationCreateExample'
+      responses:
+        '201':
+          description: Организация создана; вызывающий — ORG_OWNER.
+          headers:
+            Location:
+              description: URL созданной организации.
+              schema:
+                type: string
+                format: uri-reference
+              example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/OrganizationExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags:
+        - organizations
+      summary: Мои организации
+      operationId: getMyOrganizations
+      description: |
+        Список организаций, в которых состоит текущий пользователь, с его наивысшей ролью. Эквивалентно `/me/memberships` + данные организации.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Мои организации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrganizationSummary'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                myOrgs:
+                  $ref: '#/components/examples/OrganizationListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /organizations/slug-availability:
+    get:
+      tags:
+        - organizations
+      summary: Проверить доступность slug
+      operationId: checkSlugAvailability
+      description: |
+        Проверяет, свободен ли slug для создания организации. Публичный (не требует membership): используется в онбординге до создания.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SlugQuery'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Доступность slug.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SlugAvailability'
+              examples:
+                availability:
+                  $ref: '#/components/examples/SlugAvailabilityExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}:
+    get:
+      tags:
+        - organizations
+      summary: Детали организации
+      operationId: getOrganization
+      description: |
+        Возвращает организацию с агрегатами (`clubsCount`, `membersCount`) для дашборда.
+
+        **Разрешение:** член организации (`membership` ACTIVE). Объём данных зависит от роли: полный вид — ORG_OWNER.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Детали организации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                organization:
+                  $ref: '#/components/examples/OrganizationExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - organizations
+      summary: Обновить организацию
+      operationId: updateOrganization
+      description: |-
+        Обновляет реквизиты организации.
+
+        **Разрешение:** `organization.manage` (ORG_OWNER).
+
+        **Правила:**
+        - Смена `slug` — проверка уникальности (`409 ORGANIZATION_SLUG_TAKEN`).
+        - Смена `defaultCurrency`/`defaultTimezone` влияет на новые клубы и расчёты.
+        - `status` здесь не меняется — используется lifecycle endpoints (`suspend`/`reactivate`/`close`).
+        - Изменения аудируются (before/after diff).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationUpdateRequest'
+            examples:
+              updateOrg:
+                value:
+                  name: Caspian Esports (KZ)
+                  defaultTimezone: Asia/Almaty
+      responses:
+        '200':
+          description: Организация обновлена.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/settings:
+    get:
+      tags:
+        - organizations
+      summary: Настройки организации
+      operationId: getOrganizationSettings
+      description: |
+        Organization-level настройки (jsonb). Клубная политика бронирования (горизонт, grace, cutoff) — в модуле Clubs.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Настройки организации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OrganizationSettings'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                settings:
+                  $ref: '#/components/examples/SettingsExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - organizations
+      summary: Обновить настройки организации
+      operationId: updateOrganizationSettings
+      description: |
+        Обновляет organization-level настройки (deep merge по объекту). Применяется к новым клубам; существующие клубы сохраняют собственные значения, если не переопределены.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationSettingsUpdateRequest'
+            examples:
+              updateSettings:
+                value:
+                  notificationDefaults:
+                    reminderLeadMinutes:
+                      - 360
+                      - 180
+                      - 30
+      responses:
+        '200':
+          description: Настройки обновлены.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OrganizationSettings'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/suspend:
+    post:
+      tags:
+        - organizations
+      summary: Приостановить организацию
+      operationId: suspendOrganization
+      description: |-
+        Переводит организацию в `SUSPENDED`: блокируются tenant-записи (создание броней, изменение клубов), данные сохраняются.
+
+        **Разрешение:** `organization.manage` (ORG_OWNER). Для приостановки требуется причина.
+
+        После suspend все активные сессии участников продолжают действовать, но операции записи в tenant возвращают `423/422 ORGANIZATION_SUSPENDED`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationActionRequest'
+            examples:
+              suspend:
+                value:
+                  reason: Переезд в новое здание
+      responses:
+        '200':
+          description: Организация приостановлена.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/reactivate:
+    post:
+      tags:
+        - organizations
+      summary: Возобновить организацию
+      operationId: reactivateOrganization
+      description: |
+        Переводит `SUSPENDED` → `ACTIVE`. Восстанавливает возможность записи. Действует только для приостановленной организации; для ACTIVE — идемпотентный 200.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 240
+        description: Опциональная причина возобновления.
+      responses:
+        '200':
+          description: Организация возобновлена.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/close:
+    post:
+      tags:
+        - organizations
+      summary: Закрыть организацию
+      operationId: closeOrganization
+      description: |-
+        Мягко удаляет организацию (status → `CLOSED`, soft-delete). **Необратимо.**
+
+        **Правила:**
+        - Организация с активными бронями в будущем — `409` (требуется сначала закрыть/отменить).
+        - Все memberships переводятся в `REVOKED`; сессии участников теряют доступ к tenant.
+        - Требуется причина; фиксируется в audit log.
+
+        **Идемпотентность:** повторный close закрытой организации возвращает 200.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationActionRequest'
+            examples:
+              close:
+                value:
+                  reason: Компания закрыта
+      responses:
+        '200':
+          description: Организация закрыта.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /roles:
     get:
       tags:
@@ -2828,6 +3327,10 @@ components:
         - MEMBERSHIP_SUSPENDED
         - MEMBERSHIP_REVOKED
         - INVALID_ROLE_SCOPE
+        - ORGANIZATION_SLUG_TAKEN
+        - ORGANIZATION_SUSPENDED
+        - ORGANIZATION_CLOSED
+        - INVALID_SLUG
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -4681,6 +5184,247 @@ components:
             - 'null'
           format: date-time
           description: Срок действия приглашения (конфигурируется организацией; MVP default 7 дней).
+    OrganizationStatus:
+      type: string
+      description: Статус организации (tenant). `CLOSED` необратим (soft-delete); `SUSPENDED` блокирует запись, но данные сохраняются.
+      enum:
+        - ACTIVE
+        - SUSPENDED
+        - CLOSED
+      example: ACTIVE
+    Organization:
+      type: object
+      description: Организация — tenant и граница владения клубами и бизнес-данными. Не является ролью; роли пользователь получает через membership организации.
+      required:
+        - id
+        - name
+        - slug
+        - status
+        - defaultCurrency
+        - defaultTimezone
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор организации (tenant).
+        name:
+          type: string
+          maxLength: 160
+          description: Юридическое или отображаемое название.
+        slug:
+          type: string
+          maxLength: 100
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$
+          description: Стабильный tenant-идентификатор (lowercase, `[a-z0-9-]`, уникален среди активных).
+          example: caspian-esports
+        status:
+          $ref: '#/components/schemas/OrganizationStatus'
+        defaultCurrency:
+          type: string
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: ISO 4217; MVP default `KZT`.
+          example: KZT
+        defaultTimezone:
+          type: string
+          maxLength: 64
+          description: IANA time zone (fallback для клубов без собственной).
+          example: Asia/Almaty
+        settings:
+          $ref: '#/components/schemas/OrganizationSettings'
+        clubsCount:
+          type: integer
+          minimum: 0
+          description: Количество активных клубов (агрегат для дашборда).
+          example: 2
+        membersCount:
+          type: integer
+          minimum: 0
+          description: Количество активных участников (агрегат для дашборда).
+          example: 7
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    OrganizationSummary:
+      type: object
+      description: Краткое представление организации для списков (например, `/me/organizations`).
+      required:
+        - id
+        - name
+        - slug
+        - status
+        - defaultCurrency
+        - defaultTimezone
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 160
+        slug:
+          type: string
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/OrganizationStatus'
+        defaultCurrency:
+          type: string
+          maxLength: 3
+        defaultTimezone:
+          type: string
+          maxLength: 64
+        myRole:
+          $ref: '#/components/schemas/RoleCode'
+          description: Моя наивысшая роль в этой организации.
+        clubsCount:
+          type: integer
+          minimum: 0
+          example: 2
+    OrganizationCreateRequest:
+      type: object
+      description: Создание организации. В той же транзакции создаётся membership вызывающего с ролью `ORG_OWNER`.
+      required:
+        - name
+        - slug
+      properties:
+        name:
+          type: string
+          maxLength: 160
+          description: Название организации.
+          example: Caspian Esports
+        slug:
+          type: string
+          maxLength: 100
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$
+          description: |
+            Уникальный tenant-идентификатор (lowercase, `[a-z0-9-]`).
+            Занят → `409 ORGANIZATION_SLUG_TAKEN`; неверный формат → `422 INVALID_SLUG`.
+          example: caspian-esports
+        defaultCurrency:
+          type: string
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: ISO 4217; default `KZT`.
+          default: KZT
+        defaultTimezone:
+          type: string
+          maxLength: 64
+          description: IANA time zone; default `Asia/Almaty`.
+          default: Asia/Almaty
+    OrganizationUpdateRequest:
+      type: object
+      description: Обновление реквизитов организации. Незаполненные поля не изменяются. Смена `slug` и `defaultCurrency` аудируется.
+      properties:
+        name:
+          type: string
+          maxLength: 160
+          description: Название организации.
+        slug:
+          type: string
+          maxLength: 100
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$
+          description: Уникальный tenant-идентификатор. Занят → `409 ORGANIZATION_SLUG_TAKEN`.
+        defaultCurrency:
+          type: string
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: ISO 4217.
+        defaultTimezone:
+          type: string
+          maxLength: 64
+          description: IANA time zone.
+    OrganizationSettings:
+      type: object
+      description: Organization-level настройки (jsonb). Не реляционные конфигурационные значения; клубная политика бронирования живёт в модуле Clubs.
+      additionalProperties: false
+      properties:
+        onboardingComplete:
+          type: boolean
+          description: Пройден ли онбординг (создан клуб, layout, тарифы).
+          default: false
+        notificationDefaults:
+          type: object
+          description: Дефолты уведомлений для клубов организации.
+          additionalProperties: false
+          properties:
+            locale:
+              type: string
+              maxLength: 16
+              description: Язык уведомлений, например `ru-KZ`.
+            reminderLeadMinutes:
+              type: array
+              description: Интервалы напоминаний до начала брони (минуты).
+              items:
+                type: integer
+                minimum: 1
+        invoicePrefix:
+          type: string
+          maxLength: 20
+          description: Префикс номеров чеков/броней, например `CE`.
+      example:
+        onboardingComplete: true
+        notificationDefaults:
+          locale: ru-KZ
+          reminderLeadMinutes:
+            - 180
+            - 30
+    OrganizationSettingsUpdateRequest:
+      type: object
+      description: 'Обновление organization-level настроек. Слияние на уровне объекта: переданные подполя заменяются, отсутствующие сохраняются (deep merge).'
+      properties:
+        onboardingComplete:
+          type: boolean
+        notificationDefaults:
+          type: object
+          additionalProperties: false
+          properties:
+            locale:
+              type: string
+              maxLength: 16
+            reminderLeadMinutes:
+              type: array
+              items:
+                type: integer
+                minimum: 1
+        invoicePrefix:
+          type: string
+          maxLength: 20
+    OrganizationActionRequest:
+      type: object
+      description: Действие жизненного цикла организации (suspend / reactivate / close). Для suspend/close требуется причина.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          maxLength: 240
+          description: Причина действия. Обязательна для suspend и close; аудируется.
+          example: Переезд в новое здание
+    SlugAvailability:
+      type: object
+      description: Результат проверки доступности slug.
+      required:
+        - slug
+        - available
+      properties:
+        slug:
+          type: string
+          maxLength: 100
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$
+        available:
+          type: boolean
+          description: Свободен ли slug для создания организации.
+        suggestion:
+          type:
+            - string
+            - 'null'
+          maxLength: 100
+          description: Рекомендуемая альтернатива, если занят.
   parameters:
     ReservationId:
       name: reservationId
@@ -4963,6 +5707,16 @@ components:
         type: string
         maxLength: 240
       example: Сотрудник уволен
+    SlugQuery:
+      name: slug
+      in: query
+      required: true
+      description: Slug для проверки доступности.
+      schema:
+        type: string
+        maxLength: 100
+        pattern: ^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$
+      example: caspian-esports
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -5602,3 +6356,78 @@ components:
         meta:
           requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
           timestamp: '2026-08-04T10:31:00Z'
+    OrganizationCreateExample:
+      summary: Создание организации
+      value:
+        name: Caspian Esports
+        slug: caspian-esports
+        defaultCurrency: KZT
+        defaultTimezone: Asia/Almaty
+    OrganizationExample:
+      summary: Детали организации
+      value:
+        data:
+          id: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          name: Caspian Esports
+          slug: caspian-esports
+          status: ACTIVE
+          defaultCurrency: KZT
+          defaultTimezone: Asia/Almaty
+          settings:
+            onboardingComplete: true
+            notificationDefaults:
+              locale: ru-KZ
+              reminderLeadMinutes:
+                - 180
+                - 30
+          clubsCount: 2
+          membersCount: 7
+          createdAt: '2026-07-01T09:00:00Z'
+          updatedAt: '2026-08-04T10:35:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:35:00Z'
+    OrganizationListExample:
+      summary: Мои организации
+      value:
+        data:
+          - id: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            name: Caspian Esports
+            slug: caspian-esports
+            status: ACTIVE
+            defaultCurrency: KZT
+            defaultTimezone: Asia/Almaty
+            myRole: ORG_OWNER
+            clubsCount: 2
+          - id: 7f6e5d4c-3b2a-4c1d-8e9f-0a1b2c3d4e5f
+            name: Astana Arena
+            slug: astana-arena
+            status: ACTIVE
+            defaultCurrency: KZT
+            defaultTimezone: Asia/Almaty
+            myRole: CLUB_ADMIN
+            clubsCount: 1
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:35:00Z'
+    SettingsExample:
+      summary: Настройки организации
+      value:
+        data:
+          onboardingComplete: true
+          notificationDefaults:
+            locale: ru-KZ
+            reminderLeadMinutes:
+              - 180
+              - 30
+          invoicePrefix: CE
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:35:00Z'
+    SlugAvailabilityExample:
+      summary: Проверка доступности slug
+      value:
+        data:
+          slug: caspian-esports
+          available: false
+          suggestion: caspian-esports-2

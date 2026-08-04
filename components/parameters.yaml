@@ -309,3 +309,14 @@ ReasonQuery:
     type: string
     maxLength: 240
   example: Сотрудник уволен
+
+SlugQuery:
+  name: slug
+  in: query
+  required: true
+  description: Slug для проверки доступности.
+  schema:
+    type: string
+    maxLength: 100
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$'
+  example: caspian-esports

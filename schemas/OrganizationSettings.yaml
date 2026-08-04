@@ -1,0 +1,34 @@
+type: object
+description: Organization-level настройки (jsonb). Не реляционные конфигурационные значения; клубная политика бронирования живёт в модуле Clubs.
+additionalProperties: false
+properties:
+  onboardingComplete:
+    type: boolean
+    description: Пройден ли онбординг (создан клуб, layout, тарифы).
+    default: false
+  notificationDefaults:
+    type: object
+    description: Дефолты уведомлений для клубов организации.
+    additionalProperties: false
+    properties:
+      locale:
+        type: string
+        maxLength: 16
+        description: Язык уведомлений, например `ru-KZ`.
+      reminderLeadMinutes:
+        type: array
+        description: Интервалы напоминаний до начала брони (минуты).
+        items:
+          type: integer
+          minimum: 1
+  invoicePrefix:
+    type: string
+    maxLength: 20
+    description: Префикс номеров чеков/броней, например `CE`.
+example:
+  onboardingComplete: true
+  notificationDefaults:
+    locale: ru-KZ
+    reminderLeadMinutes:
+      - 180
+      - 30

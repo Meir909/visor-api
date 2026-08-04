@@ -1,0 +1,20 @@
+type: object
+description: 'Обновление organization-level настроек. Слияние на уровне объекта: переданные подполя заменяются, отсутствующие сохраняются (deep merge).'
+properties:
+  onboardingComplete:
+    type: boolean
+  notificationDefaults:
+    type: object
+    additionalProperties: false
+    properties:
+      locale:
+        type: string
+        maxLength: 16
+      reminderLeadMinutes:
+        type: array
+        items:
+          type: integer
+          minimum: 1
+  invoicePrefix:
+    type: string
+    maxLength: 20
