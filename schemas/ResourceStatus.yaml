@@ -1,0 +1,15 @@
+type: string
+description: |
+  Операционный статус ресурса, которым владеет Visora (не путать с наблюдаемым состоянием Provider).
+  `MAINTENANCE`/`DISABLED` блокируют бронирование независимо от проекции Provider.
+enum:
+  - ACTIVE
+  - MAINTENANCE
+  - DISABLED
+  - RETIRED
+x-enum-descriptions:
+  ACTIVE: Доступен для бронирования.
+  MAINTENANCE: Техническое обслуживание; новые брони блокируются (422 COMPUTER_MAINTENANCE).
+  DISABLED: Отключён вручную; невидим в каталоге.
+  RETIRED: Выведен из эксплуатации (soft-delete).
+example: ACTIVE

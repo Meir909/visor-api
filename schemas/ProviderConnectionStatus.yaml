@@ -1,0 +1,13 @@
+type: string
+description: Статус подключения к Provider (Gizmo и др.).
+enum:
+  - PENDING
+  - ACTIVE
+  - DEGRADED
+  - DISABLED
+x-enum-descriptions:
+  PENDING: Создано, ещё не проверено.
+  ACTIVE: Health check успешен; интеграция работает.
+  DEGRADED: Работает с частичными capability/ошибками.
+  DISABLED: Отключено; ресурсы видны, но синхронизация остановлена.
+example: ACTIVE

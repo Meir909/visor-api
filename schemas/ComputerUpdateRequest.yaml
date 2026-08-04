@@ -1,0 +1,36 @@
+type: object
+description: Обновление компьютера. Незаполненные поля не изменяются. Смена зоны/цены не влияет на существующие брони.
+properties:
+  zoneId:
+    type: string
+    format: uuid
+  number:
+    type: integer
+    minimum: 1
+    description: Смена номера → проверка уникальности (`409 COMPUTER_NUMBER_TAKEN`).
+  displayName:
+    type: string
+    maxLength: 120
+  hardware:
+    type: object
+    description: Полная замена блока комплектующих.
+    properties:
+      gpu:
+        type: [string, 'null']
+        maxLength: 160
+      cpu:
+        type: [string, 'null']
+        maxLength: 160
+      ramGb:
+        type: [integer, 'null']
+        minimum: 1
+      monitor:
+        type: [string, 'null']
+        maxLength: 160
+      monitorRefreshHz:
+        type: [integer, 'null']
+        minimum: 1
+  priceOverrideMinor:
+    type: [string, 'null']
+    pattern: '^\d+$'
+    description: Прямое переопределение почасовой цены; `null` — убрать переопределение.

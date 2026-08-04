@@ -1,0 +1,136 @@
+type: object
+description: Полный компьютер (управляемый вид) — общий резервируемый ресурс + специализированные поля + операционный статус + наблюдаемая проекция Provider.
+required:
+  - id
+  - resourceId
+  - organizationId
+  - clubId
+  - zoneId
+  - number
+  - displayName
+  - resourceStatus
+  - capacity
+  - pricePerHourMinor
+  - currency
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  resourceId:
+    type: string
+    format: uuid
+    description: Общий резервируемый ресурс (reservable_resources); бронирование идёт через него.
+  organizationId:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  zoneId:
+    type: string
+    format: uuid
+  zone:
+    type: object
+    description: Вложенная зона для отображения.
+    properties:
+      id:
+        type: string
+        format: uuid
+      code:
+        type: string
+        maxLength: 50
+      name:
+        type: string
+        maxLength: 120
+      type:
+        $ref: './ZoneType.yaml'
+  number:
+    type: integer
+    minimum: 1
+    description: Номер в клубе; уникален среди активных компьютеров.
+  displayName:
+    type: string
+    maxLength: 120
+  resourceStatus:
+    $ref: './ResourceStatus.yaml'
+  capacity:
+    type: integer
+    minimum: 1
+    default: 1
+    description: Вместимость; для компьютера всегда 1.
+  hardware:
+    type: object
+    description: Описание комплектующих (витрина и фильтры).
+    properties:
+      gpu:
+        type: [string, 'null']
+        maxLength: 160
+        example: RTX 4070
+      cpu:
+        type: [string, 'null']
+        maxLength: 160
+        example: Ryzen 7 7800X3D
+      ramGb:
+        type: [integer, 'null']
+        minimum: 1
+        example: 32
+      monitor:
+        type: [string, 'null']
+        maxLength: 160
+        example: 27" 240Hz
+      monitorRefreshHz:
+        type: [integer, 'null']
+        minimum: 1
+        example: 240
+  pricePerHourMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Эффективная цена с учётом `priceOverrideMinor`; иначе базовая цена клуба.
+  currency:
+    type: string
+    maxLength: 3
+  priceOverrideMinor:
+    type: [string, 'null']
+    pattern: '^-?\d+$'
+    description: Прямое переопределение почасовой цены ресурса (гибкие правила — в Pricing).
+  availabilityOverride:
+    type: [string, 'null']
+    description: Принудительная доступность `AVAILABLE`/`UNAVAILABLE` (строго аудируется), опционально с истечением.
+  availabilityOverrideUntil:
+    type: [string, 'null']
+    format: date-time
+  providerState:
+    $ref: './ProviderResourceState.yaml'
+  lastProviderStateAt:
+    type: [string, 'null']
+    format: date-time
+    description: Freshness проекции; stale state → бронь запрещена либо degraded policy.
+  binding:
+    type: [object, 'null']
+    description: Активная привязка к Provider (если есть).
+    properties:
+      id:
+        type: string
+        format: uuid
+      providerConnectionId:
+        type: string
+        format: uuid
+      providerDisplayName:
+        type: string
+        maxLength: 120
+      externalResourceId:
+        type: string
+        maxLength: 255
+      bindingStatus:
+        $ref: './BindingStatus.yaml'
+      lastVerifiedAt:
+        type: [string, 'null']
+        format: date-time
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

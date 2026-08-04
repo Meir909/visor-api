@@ -1,0 +1,13 @@
+type: object
+description: Действие операционного статуса компьютера (maintenance/disable/restore). Для maintenance/disable требуется причина; опционально `untilAt`.
+required:
+  - reason
+properties:
+  reason:
+    type: string
+    maxLength: 240
+    description: Причина действия; аудируется.
+  untilAt:
+    type: [string, 'null']
+    format: date-time
+    description: Плановое окончание (например, ремонт до вечера). Необязательно; статус не снимается автоматически.

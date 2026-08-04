@@ -1,0 +1,59 @@
+type: object
+description: Подключение клуба к внешнему Provider (Gizmo или будущий адаптер). Секреты не хранятся — только reference на secret manager/KMS.
+required:
+  - id
+  - organizationId
+  - clubId
+  - providerType
+  - displayName
+  - status
+  - capabilities
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  organizationId:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  providerType:
+    type: string
+    maxLength: 50
+    description: Тип адаптера. MVP — `GIZMO`.
+    example: GIZMO
+  displayName:
+    type: string
+    maxLength: 120
+    example: Gizmo Main Hall
+  status:
+    $ref: './ProviderConnectionStatus.yaml'
+  baseUrl:
+    type: [string, 'null']
+    maxLength: 500
+    description: Endpoint Provider; allowlist + защита от SSRF.
+  capabilities:
+    $ref: './ProviderCapabilities.yaml'
+  configuration:
+    type: object
+    description: Не-секретная конфигурация адаптера (jsonb).
+    additionalProperties: true
+  lastHealthCheckAt:
+    type: [string, 'null']
+    format: date-time
+  lastSuccessAt:
+    type: [string, 'null']
+    format: date-time
+  lastErrorCode:
+    type: [string, 'null']
+    maxLength: 100
+    description: Санитизированный код ошибки интеграции.
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

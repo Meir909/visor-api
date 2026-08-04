@@ -1,0 +1,13 @@
+type: string
+description: Статус привязки ресурса к внешнему идентификатору Provider.
+enum:
+  - ACTIVE
+  - UNVERIFIED
+  - BROKEN
+  - DISABLED
+x-enum-descriptions:
+  ACTIVE: Привязка подтверждена и используется.
+  UNVERIFIED: Привязка создана, но ещё не проверена.
+  BROKEN: Внешний ресурс не найден у Provider; синхронизация пропускается.
+  DISABLED: Привязка отключена.
+example: ACTIVE

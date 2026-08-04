@@ -1,0 +1,53 @@
+type: object
+description: Привязка резервируемого ресурса Visora к внешнему идентификатору Provider. Внешние ID не протекают в доменные ключи.
+required:
+  - id
+  - organizationId
+  - clubId
+  - providerConnectionId
+  - resourceId
+  - externalResourceId
+  - bindingStatus
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  organizationId:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  providerConnectionId:
+    type: string
+    format: uuid
+  resourceId:
+    type: string
+    format: uuid
+    description: Резервируемый ресурс Visora (Computer или VIP-комната).
+  computerNumber:
+    type: [integer, 'null']
+    minimum: 1
+    description: Диагностический номер компьютера (если ресурс — компьютер).
+  externalResourceId:
+    type: string
+    maxLength: 255
+    description: Идентификатор ресурса в терминах Provider (opaque, case-sensitive по контракту).
+    example: GZ-CMP-012
+  externalDisplayName:
+    type: [string, 'null']
+    maxLength: 255
+    description: Диагностическое имя на стороне Provider.
+  bindingStatus:
+    $ref: './BindingStatus.yaml'
+  lastVerifiedAt:
+    type: [string, 'null']
+    format: date-time
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

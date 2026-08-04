@@ -1,0 +1,991 @@
+# =====================================================================
+# Visora API — Paths модуля Computers (ресурсы + состояние + Provider binding)
+# =====================================================================
+
+'/clubs/{clubId}/computers':
+  get:
+    tags:
+      - computers
+    summary: Список компьютеров клуба (публично)
+    operationId: listClubComputers
+    description: |-
+      Каталог компьютеров для карты бронирования и витрины. Доступен только для `ACTIVE` клуба.
+
+      **Правила:**
+      - Возвращаются компьютеры с `resourceStatus = ACTIVE` (MAINTENANCE/DISABLED скрыты).
+      - `providerState` — проекция, оценивайте по `lastProviderStateAt`; stale state не трактуется как гарантированный.
+      - Занятость интервала (occupancy) считается через `/reservations/availability`, не здесь.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ZoneQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Компьютеры клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ComputerSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              computers:
+                $ref: '../components/examples.yaml#/ComputerListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/clubs/{clubId}/computers/{computerId}':
+  get:
+    tags:
+      - computers
+    summary: Компьютер клуба (публично)
+    operationId: getPublicComputer
+    description: |
+      Публичная карточка компьютера: зона, hardware, эффективная цена, последняя проекция состояния Provider.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Компьютер.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ComputerSummary.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/computers':
+  post:
+    tags:
+      - computers-admin
+    summary: Создать компьютер
+    operationId: createComputer
+    description: |-
+      Создаёт компьютер в клубе. В одной транзакции создаются общий резервируемый ресурс (`resource_type=COMPUTER`, capacity 1, ACTIVE) и строка `computers`.
+
+      **Разрешение:** `club.manage` (ORG_OWNER, CLUB_ADMIN клуба).
+
+      **Правила:**
+      - `zoneId` обязателен; зона должна принадлежать клубу → иначе `422 ZONE_NOT_FOUND`.
+      - `number` уникален среди активных компьютеров клуба → занят = `409 COMPUTER_NUMBER_TAKEN`.
+      - Базовая цена берётся из клуба; `priceOverrideMinor` переопределяет для ресурса.
+
+      **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ComputerCreateRequest.yaml'
+          examples:
+            createComputer:
+              $ref: '../components/examples.yaml#/ComputerCreateExample'
+    responses:
+      '201':
+        description: Компьютер создан.
+        headers:
+          Location:
+            description: URL созданного компьютера.
+            schema:
+              type: string
+              format: uri-reference
+            example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f/clubs/8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a/computers/3fa85f64-5717-4562-b3fc-2c963f66afa6
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/ComputerDetailExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+  get:
+    tags:
+      - computers-admin
+    summary: Список компьютеров клуба (управляемый вид)
+    operationId: listComputers
+    description: |
+      Все компьютеры клуба, включая MAINTENANCE/DISABLED/RETIRED. Фильтры по зоне и операционному статусу. Для инвентаря и дашбордов.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ZoneQuery'
+      - $ref: '../components/parameters.yaml#/ResourceStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Компьютеры.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              computers:
+                value:
+                  data:
+                    - id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                      resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                      clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+                      zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+                      zone:
+                        id: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+                        code: vip-2
+                        name: VIP Zone 2
+                        type: VIP
+                      number: 12
+                      displayName: PC 12
+                      resourceStatus: ACTIVE
+                      capacity: 1
+                      pricePerHourMinor: '130000'
+                      currency: KZT
+                      providerState: AVAILABLE
+                      lastProviderStateAt: '2026-08-04T10:39:00Z'
+                      createdAt: '2026-07-05T08:00:00Z'
+                      updatedAt: '2026-08-04T10:39:00Z'
+                  meta:
+                    page: 1
+                    pageSize: 20
+                    total: 1
+                    hasNextPage: false
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}':
+  get:
+    tags:
+      - computers-admin
+    summary: Детали компьютера (управляемый вид)
+    operationId: getComputer
+    description: |
+      Полный компьютер с hardware, переопределением цены, привязкой к Provider и последней проекцией состояния.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Компьютер.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              computer:
+                $ref: '../components/examples.yaml#/ComputerDetailExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  patch:
+    tags:
+      - computers-admin
+    summary: Обновить компьютер
+    operationId: updateComputer
+    description: |-
+      Обновляет компьютер: зона, номер, отображаемое имя, hardware, переопределение цены.
+
+      **Правила:**
+      - Смена `number` — проверка уникальности (`409 COMPUTER_NUMBER_TAKEN`).
+      - Смена `zoneId` — зона должна быть клуба (`422 ZONE_NOT_FOUND`).
+      - Изменения не влияют на существующие брони (они ссылаются на стабильный resourceId).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ComputerUpdateRequest.yaml'
+          examples:
+            updateComputer:
+              value:
+                displayName: PC 12 (240Hz)
+                hardware:
+                  monitorRefreshHz: 240
+    responses:
+      '200':
+        description: Компьютер обновлён.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+  delete:
+    tags:
+      - computers-admin
+    summary: Вывести компьютер из эксплуатации
+    operationId: retireComputer
+    description: |-
+      Мягко удаляет компьютер (`resourceStatus → RETIRED`, soft-delete). Компьютер исчезает из каталога и новых броней.
+
+      **Правила:**
+      - Компьютер с будущими активными бронями = `409 COMPUTER_HAS_ACTIVE_RESERVATIONS`.
+      - Привязка к Provider отключается; история броней сохраняется.
+      - Восстановление — создание нового компьютера.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ComputerActionRequest.yaml'
+          examples:
+            retire:
+              value:
+                reason: Списан после замены видеокарты
+    responses:
+      '204':
+        description: Компьютер выведен из эксплуатации.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/maintenance':
+  post:
+    tags:
+      - computers-admin
+    summary: Перевести компьютер в обслуживание
+    operationId: maintenanceComputer
+    description: |
+      `resourceStatus → MAINTENANCE`: компьютер скрывается из каталога, новые брони блокируются (`422 COMPUTER_MAINTENANCE`). Существующие брони сохраняются. Требуется причина.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ComputerActionRequest.yaml'
+          examples:
+            maintenance:
+              value:
+                reason: Замена термопасты
+                untilAt: '2026-08-05T12:00:00Z'
+    responses:
+      '200':
+        description: Компьютер в обслуживании.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/disable':
+  post:
+    tags:
+      - computers-admin
+    summary: Отключить компьютер
+    operationId: disableComputer
+    description: |
+      `resourceStatus → DISABLED`: компьютер полностью невидим и небронируем (в отличие от MAINTENANCE — без дашбордов ремонта). Требуется причина.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ComputerActionRequest.yaml'
+          examples:
+            disable:
+              value:
+                reason: Админ закрыл проход к этому месту
+    responses:
+      '200':
+        description: Компьютер отключён.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/restore':
+  post:
+    tags:
+      - computers-admin
+    summary: Восстановить компьютер
+    operationId: restoreComputer
+    description: |
+      `MAINTENANCE`/`DISABLED` → `ACTIVE`: компьютер снова виден и доступен для бронирования. Идемпотентно для уже ACTIVE.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ComputerId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+                maxLength: 240
+            description: Опциональная причина восстановления.
+    responses:
+      '200':
+        description: Компьютер восстановлен.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Computer.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections':
+  post:
+    tags:
+      - computers-admin
+    summary: Создать подключение к Provider
+    operationId: createProviderConnection
+    description: |-
+      Создаёт подключение клуба к внешнему Provider (MVP — Gizmo) в статусе `PENDING`. Секреты задаются через secret manager out-of-band и никогда не передаются в теле.
+
+      **Разрешение:** `club.manage` (ORG_OWNER; CLUB_ADMIN — только настройка, активация требует Owner).
+
+      **Правила:**
+      - Активное подключение типа уже есть у клуба = `409` (конфликт provider type).
+      - `baseUrl` проходит allowlist-валидацию и защиту от SSRF.
+      - Для перехода в `ACTIVE` требуется успешный health check (`enable`).
+
+      **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ProviderConnectionCreateRequest.yaml'
+          examples:
+            createConnection:
+              value:
+                providerType: GIZMO
+                displayName: Gizmo Main Hall
+                baseUrl: https://gizmo.example.kz/api
+                configuration:
+                  pollIntervalSeconds: 15
+    responses:
+      '201':
+        description: Подключение создано (PENDING).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderConnection.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/ProviderConnectionExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+  get:
+    tags:
+      - computers-admin
+    summary: Список подключений к Provider
+    operationId: listProviderConnections
+    description: |
+      Все подключения клуба к внешним Provider с последним health-check и статусом.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Подключения.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ProviderConnection.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              connections:
+                value:
+                  data:
+                    - id: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+                      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                      clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+                      providerType: GIZMO
+                      displayName: Gizmo Main Hall
+                      status: ACTIVE
+                      baseUrl: https://gizmo.example.kz/api
+                      capabilities:
+                        realtimeState: true
+                        startSession: true
+                        stopSession: true
+                        lockResource: true
+                        unlockResource: true
+                        webhooks: true
+                        polling: false
+                      lastHealthCheckAt: '2026-08-04T10:00:00Z'
+                      lastSuccessAt: '2026-08-04T10:39:00Z'
+                      createdAt: '2026-07-06T09:00:00Z'
+                      updatedAt: '2026-08-04T10:00:00Z'
+                  meta:
+                    page: 1
+                    pageSize: 20
+                    total: 1
+                    hasNextPage: false
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}':
+  get:
+    tags:
+      - computers-admin
+    summary: Детали подключения к Provider
+    operationId: getProviderConnection
+    description: |
+      Полное подключение: статус, capability, последний health check, последняя ошибка (санитизированная). Секреты не возвращаются.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Подключение.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderConnection.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              connection:
+                $ref: '../components/examples.yaml#/ProviderConnectionExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  patch:
+    tags:
+      - computers-admin
+    summary: Обновить подключение к Provider
+    operationId: updateProviderConnection
+    description: |
+      Обновляет displayName/baseUrl/конфигурацию. Изменение `baseUrl` сбрасывает статус в `PENDING` до успешной проверки.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ProviderConnectionUpdateRequest.yaml'
+          examples:
+            updateConnection:
+              value:
+                displayName: Gizmo Main Hall (v2)
+    responses:
+      '200':
+        description: Подключение обновлено.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderConnection.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/test':
+  post:
+    tags:
+      - computers-admin
+    summary: Проверить подключение к Provider
+    operationId: testProviderConnection
+    description: |
+      Запускает health check по текущему `baseUrl`. При успехе обновляет capability и `lastHealthCheckAt`, статус — по результату. Не требует перевода в ACTIVE.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Результат проверки.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderHealthCheck.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              health:
+                $ref: '../components/examples.yaml#/ProviderHealthCheckExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '502':
+        description: Provider недоступен/неавторизован; проверка завершилась с кодом ошибки.
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/disable':
+  post:
+    tags:
+      - computers-admin
+    summary: Отключить подключение к Provider
+    operationId: disableProviderConnection
+    description: |
+      Статус → `DISABLED`: синхронизация состояния и команды сессий останавливаются. Существующие брони сохраняются; новый check-in без Provider — на усмотрение клуба.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason:
+                type: string
+                maxLength: 240
+          examples:
+            disable:
+              value:
+                reason: Миграция на новый Gizmo instance
+    responses:
+      '200':
+        description: Подключение отключено.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderConnection.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/enable':
+  post:
+    tags:
+      - computers-admin
+    summary: Активировать подключение к Provider
+    operationId: enableProviderConnection
+    description: |
+      `PENDING`/`DISABLED`/`DEGRADED` → `ACTIVE`. Требует успешного health check; при неудаче — `502 PROVIDER_HEALTH_CHECK_FAILED`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Подключение активно.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderConnection.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '502':
+        description: Health check не прошёл; подключение остаётся в текущем статусе.
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings':
+  post:
+    tags:
+      - computers-admin
+    summary: Привязать ресурс к Provider
+    operationId: createProviderBinding
+    description: |-
+      Создаёт привязку резервируемого ресурса Visora к внешнему идентификатору Provider (`UNVERIFIED` до успешной верификации).
+
+      **Разрешение:** `club.manage`; подключение должно быть `ACTIVE`.
+
+      **Правила:**
+      - `externalResourceId` уникален в рамках подключения → `409 BINDING_ALREADY_EXISTS`.
+      - Ресурс уже имеет активную привязку на этом подключении → `409 RESOURCE_ALREADY_BOUND`.
+      - Ресурс должен принадлежать клубу подключения → `422 RESOURCE_NOT_FOUND`.
+
+      **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ProviderResourceBindingCreateRequest.yaml'
+          examples:
+            createBinding:
+              value:
+                resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                externalResourceId: GZ-CMP-012
+    responses:
+      '201':
+        description: Привязка создана.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderResourceBinding.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+  get:
+    tags:
+      - computers-admin
+    summary: Список привязок к Provider
+    operationId: listProviderBindings
+    description: |
+      Все привязки ресурсов к подключению. Фильтр по статусу (ACTIVE/BROKEN и т.д.) — для диагностики интеграции.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/BindingStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Привязки.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ProviderResourceBinding.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              bindings:
+                $ref: '../components/examples.yaml#/BindingsExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings/{bindingId}/verify':
+  post:
+    tags:
+      - computers-admin
+    summary: Верифицировать привязку
+    operationId: verifyProviderBinding
+    description: |
+      Проверяет, что внешний ресурс существует у Provider. `UNVERIFIED → ACTIVE`, либо `BROKEN`, если ресурс не найден. Обновляет `lastVerifiedAt`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/BindingId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Привязка верифицирована.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderResourceBinding.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '502':
+        description: Provider недоступен; привязка остаётся в текущем статусе.
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings/{bindingId}':
+  delete:
+    tags:
+      - computers-admin
+    summary: Отвязать ресурс от Provider
+    operationId: deleteProviderBinding
+    description: |
+      Отключает привязку (`DISABLED`, soft-delete). Ресурс остаётся в инвентаре Visora, но перестаёт синхронизироваться. Ресурс с активной сессией → `409`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/BindingId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason:
+                type: string
+                maxLength: 240
+          examples:
+            unbind:
+              value:
+                reason: Компьютер переведён на другую интеграцию
+    responses:
+      '204':
+        description: Привязка отключена.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'

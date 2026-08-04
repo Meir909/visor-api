@@ -1,0 +1,59 @@
+type: object
+description: Публичная краткая карточка компьютера для витрины/карты бронирования.
+required:
+  - id
+  - resourceId
+  - clubId
+  - zoneId
+  - zoneCode
+  - number
+  - displayName
+  - resourceStatus
+  - pricePerHourMinor
+  - currency
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор компьютера (subtype).
+  resourceId:
+    type: string
+    format: uuid
+    description: Общий резервируемый ресурс; аллокации броней ссылаются на него.
+  clubId:
+    type: string
+    format: uuid
+  zoneId:
+    type: string
+    format: uuid
+  zoneCode:
+    type: string
+    maxLength: 50
+    description: Стабильный код зоны (например `vip-2`).
+  zoneName:
+    type: string
+    maxLength: 120
+  number:
+    type: integer
+    minimum: 1
+    description: Человеко-понятный номер компьютера в клубе.
+  displayName:
+    type: string
+    maxLength: 120
+  resourceStatus:
+    $ref: './ResourceStatus.yaml'
+  pricePerHourMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Эффективная почасовая цена в minor units (базовая цена клуба с учётом переопределения ресурса).
+    example: '120000'
+  currency:
+    type: string
+    maxLength: 3
+    example: KZT
+  providerState:
+    $ref: './ProviderResourceState.yaml'
+  lastProviderStateAt:
+    type: [string, 'null']
+    format: date-time
+    description: Freshness наблюдаемого состояния. Старое состояние не трактуется как гарантированно актуальное.

@@ -1,0 +1,14 @@
+type: object
+description: Обновление подключения к Provider. Изменение `baseUrl` переводит статус в `PENDING` до успешной проверки.
+properties:
+  displayName:
+    type: string
+    maxLength: 120
+  baseUrl:
+    type: string
+    maxLength: 500
+    format: uri
+  configuration:
+    type: object
+    description: Deep merge не-секретной конфигурации.
+    additionalProperties: true

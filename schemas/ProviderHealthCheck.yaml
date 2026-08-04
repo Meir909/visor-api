@@ -1,0 +1,29 @@
+type: object
+description: Результат проверки подключения к Provider (health check).
+required:
+  - ok
+  - checkedAt
+properties:
+  ok:
+    type: boolean
+    description: Достижим ли Provider и валидна ли аутентификация.
+  status:
+    $ref: './ProviderConnectionStatus.yaml'
+    description: Итоговый статус подключения после проверки.
+  latencyMs:
+    type: [integer, 'null']
+    minimum: 0
+    description: Время ответа.
+  capabilities:
+    $ref: './ProviderCapabilities.yaml'
+    description: Обнаруженные capability (заполняются при успехе).
+  errorCode:
+    type: [string, 'null']
+    maxLength: 100
+    description: Машиночитаемый код ошибки при неудаче (например `PROVIDER_UNAUTHORIZED`).
+  detail:
+    type: [string, 'null']
+    description: Человеко-понятное описание (не содержит секретов).
+  checkedAt:
+    type: string
+    format: date-time

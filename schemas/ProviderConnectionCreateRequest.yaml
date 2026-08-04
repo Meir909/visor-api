@@ -1,0 +1,26 @@
+type: object
+description: Создание подключения к Provider. Секрет задаётся через secret manager out-of-band (в теле никогда не передаётся).
+required:
+  - providerType
+  - displayName
+  - baseUrl
+properties:
+  providerType:
+    type: string
+    maxLength: 50
+    description: Тип адаптера; должен соответствовать зарегистрированному адаптеру.
+    example: GIZMO
+  displayName:
+    type: string
+    maxLength: 120
+    example: Gizmo Main Hall
+  baseUrl:
+    type: string
+    maxLength: 500
+    format: uri
+    description: Endpoint Provider; валидируется allowlist, защита от SSRF.
+    example: https://gizmo.example.kz/api
+  configuration:
+    type: object
+    description: Не-секретная конфигурация адаптера (jsonb).
+    additionalProperties: true

@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle) и **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба). Остальные модули (Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба) и **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки). Остальные модули (Layout, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -559,7 +559,125 @@ tags:
           H -- Yes --> OK[DRAFT → ACTIVE + outbox]
       ```
 
+  - name: computers
+    description: |-
+      # Компьютеры (Player / Public)
+
+      Каталог компьютеров клуба для карты бронирования и витрины. Computer — канонический ресурс Visora для бронирования; он **не равен** Provider DTO.
+
+      **Ключевое разделение состояний:**
+      - `resourceStatus` (ACTIVE/MAINTENANCE/DISABLED/RETIRED) — операционный статус, которым владеет Visora.
+      - `providerState` (AVAILABLE/IN_USE/...) — наблюдаемая проекция состояния от Provider с `lastProviderStateAt` (freshness). Stale state не выдаётся как гарантированно актуальное.
+
+      `BUSY` — наблюдаемое состояние, не игровая сессия Visora. Фактический current gaming state принадлежит Provider.
+
+      ## Вычисление итоговой доступности
+
+      ```mermaid
+      flowchart LR
+          R[(resourceStatus)] --> A{Доступен?}
+          P[(providerState)] --> A
+          O[(reservations occupancy)] --> A
+          A --> AV[availability read model]
+      ```
+
+  - name: computers-admin
+    description: |-
+      # Компьютеры (Admin / Owner)
+
+      Управление инвентарём клубов: создание/обновление компьютеров, операционный статус (maintenance/disable/restore), подключения к Provider (Gizmo) и привязки ресурсов к внешним идентификаторам.
+
+      **Разрешения:** `club.manage` — ORG_OWNER (все клубы), CLUB_ADMIN (назначенные clubId). Активация Provider-подключения — ORG_OWNER.
+
+      ## Модель ресурса
+
+      ```mermaid
+      classDiagram
+          class ReservableResource {
+            +UUID id
+            +ResourceType type
+            +ResourceStatus status
+            +int capacity
+            +zoneId
+          }
+          class Computer {
+            +int number
+            +hardware
+          }
+          class ProviderConnection {
+            +providerType
+            +status
+          }
+          class ProviderBinding {
+            +externalResourceId
+          }
+          ReservableResource "1" <-- "1" Computer
+          ReservableResource "1" --> "many" ProviderBinding
+          ProviderConnection "1" --> "many" ProviderBinding
+      ```
+
+      ## Последовательность создания компьютера
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant O as Owner (Next.js)
+          participant API as Visora API
+          participant SVC as Computers Service
+          participant DB as PostgreSQL
+
+          O->>API: POST .../clubs/{clubId}/computers {zoneId, number}
+          API->>SVC: CreateComputerCommand
+          SVC->>SVC: zone belongs to club? number free?
+          SVC->>DB: BEGIN → INSERT reservable_resource + computer → COMMIT
+          API-->>O: 201 Computer
+      ```
+
+      ## Жизненный цикл операционного статуса
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> ACTIVE: create
+          ACTIVE --> MAINTENANCE: maintenance (причина)
+          ACTIVE --> DISABLED: disable (причина)
+          MAINTENANCE --> ACTIVE: restore
+          DISABLED --> ACTIVE: restore
+          ACTIVE --> RETIRED: delete (блок при будущих бронях)
+          MAINTENANCE --> RETIRED: delete
+          RETIRED --> [*]
+      ```
+
 paths:
+  '/clubs/{clubId}/computers':
+    $ref: './paths/computers.yaml#/~1clubs~1{clubId}~1computers'
+  '/clubs/{clubId}/computers/{computerId}':
+    $ref: './paths/computers.yaml#/~1clubs~1{clubId}~1computers~1{computerId}'
+  '/organizations/{organizationId}/clubs/{clubId}/computers':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1computers'
+  '/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1computers~1{computerId}'
+  '/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/maintenance':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1computers~1{computerId}~1maintenance'
+  '/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/disable':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1computers~1{computerId}~1disable'
+  '/organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/restore':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1computers~1{computerId}~1restore'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/test':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}~1test'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/disable':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}~1disable'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/enable':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}~1enable'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}~1bindings'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings/{bindingId}/verify':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}~1bindings~1{bindingId}~1verify'
+  '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings/{bindingId}':
+    $ref: './paths/computers.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1provider-connections~1{connectionId}~1bindings~1{bindingId}'
   '/clubs':
     $ref: './paths/clubs.yaml#/~1clubs'
   '/clubs/{clubId}':
@@ -844,6 +962,38 @@ components:
       $ref: './schemas/ClubClosureCreateRequest.yaml'
     ClubActionRequest:
       $ref: './schemas/ClubActionRequest.yaml'
+    ResourceStatus:
+      $ref: './schemas/ResourceStatus.yaml'
+    ZoneType:
+      $ref: './schemas/ZoneType.yaml'
+    Computer:
+      $ref: './schemas/Computer.yaml'
+    ComputerSummary:
+      $ref: './schemas/ComputerSummary.yaml'
+    ComputerCreateRequest:
+      $ref: './schemas/ComputerCreateRequest.yaml'
+    ComputerUpdateRequest:
+      $ref: './schemas/ComputerUpdateRequest.yaml'
+    ComputerActionRequest:
+      $ref: './schemas/ComputerActionRequest.yaml'
+    ProviderConnectionStatus:
+      $ref: './schemas/ProviderConnectionStatus.yaml'
+    ProviderConnection:
+      $ref: './schemas/ProviderConnection.yaml'
+    ProviderConnectionCreateRequest:
+      $ref: './schemas/ProviderConnectionCreateRequest.yaml'
+    ProviderConnectionUpdateRequest:
+      $ref: './schemas/ProviderConnectionUpdateRequest.yaml'
+    ProviderCapabilities:
+      $ref: './schemas/ProviderCapabilities.yaml'
+    ProviderHealthCheck:
+      $ref: './schemas/ProviderHealthCheck.yaml'
+    BindingStatus:
+      $ref: './schemas/BindingStatus.yaml'
+    ProviderResourceBinding:
+      $ref: './schemas/ProviderResourceBinding.yaml'
+    ProviderResourceBindingCreateRequest:
+      $ref: './schemas/ProviderResourceBindingCreateRequest.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -917,6 +1067,18 @@ components:
       $ref: './components/parameters.yaml#/CityQuery'
     CountryCodeQuery:
       $ref: './components/parameters.yaml#/CountryCodeQuery'
+    ComputerId:
+      $ref: './components/parameters.yaml#/ComputerId'
+    ProviderConnectionId:
+      $ref: './components/parameters.yaml#/ProviderConnectionId'
+    BindingId:
+      $ref: './components/parameters.yaml#/BindingId'
+    ZoneQuery:
+      $ref: './components/parameters.yaml#/ZoneQuery'
+    ResourceStatusQuery:
+      $ref: './components/parameters.yaml#/ResourceStatusQuery'
+    BindingStatusQuery:
+      $ref: './components/parameters.yaml#/BindingStatusQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -995,3 +1157,15 @@ components:
       $ref: './components/examples.yaml#/WorkingHoursExample'
     ClosureExample:
       $ref: './components/examples.yaml#/ClosureExample'
+    ComputerListExample:
+      $ref: './components/examples.yaml#/ComputerListExample'
+    ComputerDetailExample:
+      $ref: './components/examples.yaml#/ComputerDetailExample'
+    ComputerCreateExample:
+      $ref: './components/examples.yaml#/ComputerCreateExample'
+    ProviderConnectionExample:
+      $ref: './components/examples.yaml#/ProviderConnectionExample'
+    ProviderHealthCheckExample:
+      $ref: './components/examples.yaml#/ProviderHealthCheckExample'
+    BindingsExample:
+      $ref: './components/examples.yaml#/BindingsExample'

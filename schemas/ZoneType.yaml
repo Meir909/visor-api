@@ -1,0 +1,13 @@
+type: string
+description: Тип зоны клуба.
+enum:
+  - GENERAL
+  - VIP
+  - PRIVATE
+  - OTHER
+x-enum-descriptions:
+  GENERAL: Общий зал.
+  VIP: ВИП-зона (обычно повышенная цена).
+  PRIVATE: Отдельная комната.
+  OTHER: Прочее.
+example: VIP

@@ -1,0 +1,15 @@
+type: object
+description: Создание привязки ресурса Visora к ресурсу Provider.
+required:
+  - resourceId
+  - externalResourceId
+properties:
+  resourceId:
+    type: string
+    format: uuid
+    description: Резервируемый ресурс в рамках клуба подключения.
+  externalResourceId:
+    type: string
+    maxLength: 255
+    description: Идентификатор ресурса у Provider. Занят на этом подключении = `409 BINDING_ALREADY_EXISTS`.
+    example: GZ-CMP-012

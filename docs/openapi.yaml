@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle) и **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба). Остальные модули (Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба) и **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки). Остальные модули (Layout, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -547,7 +547,1100 @@ tags:
           H -- No --> R1
           H -- Yes --> OK[DRAFT → ACTIVE + outbox]
       ```
+  - name: computers
+    description: |-
+      # Компьютеры (Player / Public)
+
+      Каталог компьютеров клуба для карты бронирования и витрины. Computer — канонический ресурс Visora для бронирования; он **не равен** Provider DTO.
+
+      **Ключевое разделение состояний:**
+      - `resourceStatus` (ACTIVE/MAINTENANCE/DISABLED/RETIRED) — операционный статус, которым владеет Visora.
+      - `providerState` (AVAILABLE/IN_USE/...) — наблюдаемая проекция состояния от Provider с `lastProviderStateAt` (freshness). Stale state не выдаётся как гарантированно актуальное.
+
+      `BUSY` — наблюдаемое состояние, не игровая сессия Visora. Фактический current gaming state принадлежит Provider.
+
+      ## Вычисление итоговой доступности
+
+      ```mermaid
+      flowchart LR
+          R[(resourceStatus)] --> A{Доступен?}
+          P[(providerState)] --> A
+          O[(reservations occupancy)] --> A
+          A --> AV[availability read model]
+      ```
+  - name: computers-admin
+    description: |-
+      # Компьютеры (Admin / Owner)
+
+      Управление инвентарём клубов: создание/обновление компьютеров, операционный статус (maintenance/disable/restore), подключения к Provider (Gizmo) и привязки ресурсов к внешним идентификаторам.
+
+      **Разрешения:** `club.manage` — ORG_OWNER (все клубы), CLUB_ADMIN (назначенные clubId). Активация Provider-подключения — ORG_OWNER.
+
+      ## Модель ресурса
+
+      ```mermaid
+      classDiagram
+          class ReservableResource {
+            +UUID id
+            +ResourceType type
+            +ResourceStatus status
+            +int capacity
+            +zoneId
+          }
+          class Computer {
+            +int number
+            +hardware
+          }
+          class ProviderConnection {
+            +providerType
+            +status
+          }
+          class ProviderBinding {
+            +externalResourceId
+          }
+          ReservableResource "1" <-- "1" Computer
+          ReservableResource "1" --> "many" ProviderBinding
+          ProviderConnection "1" --> "many" ProviderBinding
+      ```
+
+      ## Последовательность создания компьютера
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant O as Owner (Next.js)
+          participant API as Visora API
+          participant SVC as Computers Service
+          participant DB as PostgreSQL
+
+          O->>API: POST .../clubs/{clubId}/computers {zoneId, number}
+          API->>SVC: CreateComputerCommand
+          SVC->>SVC: zone belongs to club? number free?
+          SVC->>DB: BEGIN → INSERT reservable_resource + computer → COMMIT
+          API-->>O: 201 Computer
+      ```
+
+      ## Жизненный цикл операционного статуса
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> ACTIVE: create
+          ACTIVE --> MAINTENANCE: maintenance (причина)
+          ACTIVE --> DISABLED: disable (причина)
+          MAINTENANCE --> ACTIVE: restore
+          DISABLED --> ACTIVE: restore
+          ACTIVE --> RETIRED: delete (блок при будущих бронях)
+          MAINTENANCE --> RETIRED: delete
+          RETIRED --> [*]
+      ```
 paths:
+  /clubs/{clubId}/computers:
+    get:
+      tags:
+        - computers
+      summary: Список компьютеров клуба (публично)
+      operationId: listClubComputers
+      description: |-
+        Каталог компьютеров для карты бронирования и витрины. Доступен только для `ACTIVE` клуба.
+
+        **Правила:**
+        - Возвращаются компьютеры с `resourceStatus = ACTIVE` (MAINTENANCE/DISABLED скрыты).
+        - `providerState` — проекция, оценивайте по `lastProviderStateAt`; stale state не трактуется как гарантированный.
+        - Занятость интервала (occupancy) считается через `/reservations/availability`, не здесь.
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ZoneQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Компьютеры клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ComputerSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                computers:
+                  $ref: '#/components/examples/ComputerListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /clubs/{clubId}/computers/{computerId}:
+    get:
+      tags:
+        - computers
+      summary: Компьютер клуба (публично)
+      operationId: getPublicComputer
+      description: |
+        Публичная карточка компьютера: зона, hardware, эффективная цена, последняя проекция состояния Provider.
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Компьютер.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ComputerSummary'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/computers:
+    post:
+      tags:
+        - computers-admin
+      summary: Создать компьютер
+      operationId: createComputer
+      description: |-
+        Создаёт компьютер в клубе. В одной транзакции создаются общий резервируемый ресурс (`resource_type=COMPUTER`, capacity 1, ACTIVE) и строка `computers`.
+
+        **Разрешение:** `club.manage` (ORG_OWNER, CLUB_ADMIN клуба).
+
+        **Правила:**
+        - `zoneId` обязателен; зона должна принадлежать клубу → иначе `422 ZONE_NOT_FOUND`.
+        - `number` уникален среди активных компьютеров клуба → занят = `409 COMPUTER_NUMBER_TAKEN`.
+        - Базовая цена берётся из клуба; `priceOverrideMinor` переопределяет для ресурса.
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputerCreateRequest'
+            examples:
+              createComputer:
+                $ref: '#/components/examples/ComputerCreateExample'
+      responses:
+        '201':
+          description: Компьютер создан.
+          headers:
+            Location:
+              description: URL созданного компьютера.
+              schema:
+                type: string
+                format: uri-reference
+              example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f/clubs/8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a/computers/3fa85f64-5717-4562-b3fc-2c963f66afa6
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/ComputerDetailExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags:
+        - computers-admin
+      summary: Список компьютеров клуба (управляемый вид)
+      operationId: listComputers
+      description: |
+        Все компьютеры клуба, включая MAINTENANCE/DISABLED/RETIRED. Фильтры по зоне и операционному статусу. Для инвентаря и дашбордов.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ZoneQuery'
+        - $ref: '#/components/parameters/ResourceStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Компьютеры.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                computers:
+                  value:
+                    data:
+                      - id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                        resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+                        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+                        zone:
+                          id: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+                          code: vip-2
+                          name: VIP Zone 2
+                          type: VIP
+                        number: 12
+                        displayName: PC 12
+                        resourceStatus: ACTIVE
+                        capacity: 1
+                        pricePerHourMinor: '130000'
+                        currency: KZT
+                        providerState: AVAILABLE
+                        lastProviderStateAt: '2026-08-04T10:39:00Z'
+                        createdAt: '2026-07-05T08:00:00Z'
+                        updatedAt: '2026-08-04T10:39:00Z'
+                    meta:
+                      page: 1
+                      pageSize: 20
+                      total: 1
+                      hasNextPage: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/computers/{computerId}:
+    get:
+      tags:
+        - computers-admin
+      summary: Детали компьютера (управляемый вид)
+      operationId: getComputer
+      description: |
+        Полный компьютер с hardware, переопределением цены, привязкой к Provider и последней проекцией состояния.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Компьютер.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                computer:
+                  $ref: '#/components/examples/ComputerDetailExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - computers-admin
+      summary: Обновить компьютер
+      operationId: updateComputer
+      description: |-
+        Обновляет компьютер: зона, номер, отображаемое имя, hardware, переопределение цены.
+
+        **Правила:**
+        - Смена `number` — проверка уникальности (`409 COMPUTER_NUMBER_TAKEN`).
+        - Смена `zoneId` — зона должна быть клуба (`422 ZONE_NOT_FOUND`).
+        - Изменения не влияют на существующие брони (они ссылаются на стабильный resourceId).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputerUpdateRequest'
+            examples:
+              updateComputer:
+                value:
+                  displayName: PC 12 (240Hz)
+                  hardware:
+                    monitorRefreshHz: 240
+      responses:
+        '200':
+          description: Компьютер обновлён.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+        - computers-admin
+      summary: Вывести компьютер из эксплуатации
+      operationId: retireComputer
+      description: |-
+        Мягко удаляет компьютер (`resourceStatus → RETIRED`, soft-delete). Компьютер исчезает из каталога и новых броней.
+
+        **Правила:**
+        - Компьютер с будущими активными бронями = `409 COMPUTER_HAS_ACTIVE_RESERVATIONS`.
+        - Привязка к Provider отключается; история броней сохраняется.
+        - Восстановление — создание нового компьютера.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputerActionRequest'
+            examples:
+              retire:
+                value:
+                  reason: Списан после замены видеокарты
+      responses:
+        '204':
+          description: Компьютер выведен из эксплуатации.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/maintenance:
+    post:
+      tags:
+        - computers-admin
+      summary: Перевести компьютер в обслуживание
+      operationId: maintenanceComputer
+      description: |
+        `resourceStatus → MAINTENANCE`: компьютер скрывается из каталога, новые брони блокируются (`422 COMPUTER_MAINTENANCE`). Существующие брони сохраняются. Требуется причина.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputerActionRequest'
+            examples:
+              maintenance:
+                value:
+                  reason: Замена термопасты
+                  untilAt: '2026-08-05T12:00:00Z'
+      responses:
+        '200':
+          description: Компьютер в обслуживании.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/disable:
+    post:
+      tags:
+        - computers-admin
+      summary: Отключить компьютер
+      operationId: disableComputer
+      description: |
+        `resourceStatus → DISABLED`: компьютер полностью невидим и небронируем (в отличие от MAINTENANCE — без дашбордов ремонта). Требуется причина.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputerActionRequest'
+            examples:
+              disable:
+                value:
+                  reason: Админ закрыл проход к этому месту
+      responses:
+        '200':
+          description: Компьютер отключён.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/computers/{computerId}/restore:
+    post:
+      tags:
+        - computers-admin
+      summary: Восстановить компьютер
+      operationId: restoreComputer
+      description: |
+        `MAINTENANCE`/`DISABLED` → `ACTIVE`: компьютер снова виден и доступен для бронирования. Идемпотентно для уже ACTIVE.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ComputerId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 240
+              description: Опциональная причина восстановления.
+      responses:
+        '200':
+          description: Компьютер восстановлен.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Computer'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections:
+    post:
+      tags:
+        - computers-admin
+      summary: Создать подключение к Provider
+      operationId: createProviderConnection
+      description: |-
+        Создаёт подключение клуба к внешнему Provider (MVP — Gizmo) в статусе `PENDING`. Секреты задаются через secret manager out-of-band и никогда не передаются в теле.
+
+        **Разрешение:** `club.manage` (ORG_OWNER; CLUB_ADMIN — только настройка, активация требует Owner).
+
+        **Правила:**
+        - Активное подключение типа уже есть у клуба = `409` (конфликт provider type).
+        - `baseUrl` проходит allowlist-валидацию и защиту от SSRF.
+        - Для перехода в `ACTIVE` требуется успешный health check (`enable`).
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderConnectionCreateRequest'
+            examples:
+              createConnection:
+                value:
+                  providerType: GIZMO
+                  displayName: Gizmo Main Hall
+                  baseUrl: https://gizmo.example.kz/api
+                  configuration:
+                    pollIntervalSeconds: 15
+      responses:
+        '201':
+          description: Подключение создано (PENDING).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderConnection'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/ProviderConnectionExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags:
+        - computers-admin
+      summary: Список подключений к Provider
+      operationId: listProviderConnections
+      description: |
+        Все подключения клуба к внешним Provider с последним health-check и статусом.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Подключения.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderConnection'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                connections:
+                  value:
+                    data:
+                      - id: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+                        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+                        providerType: GIZMO
+                        displayName: Gizmo Main Hall
+                        status: ACTIVE
+                        baseUrl: https://gizmo.example.kz/api
+                        capabilities:
+                          realtimeState: true
+                          startSession: true
+                          stopSession: true
+                          lockResource: true
+                          unlockResource: true
+                          webhooks: true
+                          polling: false
+                        lastHealthCheckAt: '2026-08-04T10:00:00Z'
+                        lastSuccessAt: '2026-08-04T10:39:00Z'
+                        createdAt: '2026-07-06T09:00:00Z'
+                        updatedAt: '2026-08-04T10:00:00Z'
+                    meta:
+                      page: 1
+                      pageSize: 20
+                      total: 1
+                      hasNextPage: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}:
+    get:
+      tags:
+        - computers-admin
+      summary: Детали подключения к Provider
+      operationId: getProviderConnection
+      description: |
+        Полное подключение: статус, capability, последний health check, последняя ошибка (санитизированная). Секреты не возвращаются.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Подключение.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderConnection'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                connection:
+                  $ref: '#/components/examples/ProviderConnectionExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - computers-admin
+      summary: Обновить подключение к Provider
+      operationId: updateProviderConnection
+      description: |
+        Обновляет displayName/baseUrl/конфигурацию. Изменение `baseUrl` сбрасывает статус в `PENDING` до успешной проверки.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderConnectionUpdateRequest'
+            examples:
+              updateConnection:
+                value:
+                  displayName: Gizmo Main Hall (v2)
+      responses:
+        '200':
+          description: Подключение обновлено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderConnection'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/test:
+    post:
+      tags:
+        - computers-admin
+      summary: Проверить подключение к Provider
+      operationId: testProviderConnection
+      description: |
+        Запускает health check по текущему `baseUrl`. При успехе обновляет capability и `lastHealthCheckAt`, статус — по результату. Не требует перевода в ACTIVE.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Результат проверки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderHealthCheck'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                health:
+                  $ref: '#/components/examples/ProviderHealthCheckExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Provider недоступен/неавторизован; проверка завершилась с кодом ошибки.
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/disable:
+    post:
+      tags:
+        - computers-admin
+      summary: Отключить подключение к Provider
+      operationId: disableProviderConnection
+      description: |
+        Статус → `DISABLED`: синхронизация состояния и команды сессий останавливаются. Существующие брони сохраняются; новый check-in без Provider — на усмотрение клуба.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  maxLength: 240
+            examples:
+              disable:
+                value:
+                  reason: Миграция на новый Gizmo instance
+      responses:
+        '200':
+          description: Подключение отключено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderConnection'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/enable:
+    post:
+      tags:
+        - computers-admin
+      summary: Активировать подключение к Provider
+      operationId: enableProviderConnection
+      description: |
+        `PENDING`/`DISABLED`/`DEGRADED` → `ACTIVE`. Требует успешного health check; при неудаче — `502 PROVIDER_HEALTH_CHECK_FAILED`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Подключение активно.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderConnection'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Health check не прошёл; подключение остаётся в текущем статусе.
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings:
+    post:
+      tags:
+        - computers-admin
+      summary: Привязать ресурс к Provider
+      operationId: createProviderBinding
+      description: |-
+        Создаёт привязку резервируемого ресурса Visora к внешнему идентификатору Provider (`UNVERIFIED` до успешной верификации).
+
+        **Разрешение:** `club.manage`; подключение должно быть `ACTIVE`.
+
+        **Правила:**
+        - `externalResourceId` уникален в рамках подключения → `409 BINDING_ALREADY_EXISTS`.
+        - Ресурс уже имеет активную привязку на этом подключении → `409 RESOURCE_ALREADY_BOUND`.
+        - Ресурс должен принадлежать клубу подключения → `422 RESOURCE_NOT_FOUND`.
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderResourceBindingCreateRequest'
+            examples:
+              createBinding:
+                value:
+                  resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  externalResourceId: GZ-CMP-012
+      responses:
+        '201':
+          description: Привязка создана.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderResourceBinding'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags:
+        - computers-admin
+      summary: Список привязок к Provider
+      operationId: listProviderBindings
+      description: |
+        Все привязки ресурсов к подключению. Фильтр по статусу (ACTIVE/BROKEN и т.д.) — для диагностики интеграции.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/BindingStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Привязки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderResourceBinding'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                bindings:
+                  $ref: '#/components/examples/BindingsExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings/{bindingId}/verify:
+    post:
+      tags:
+        - computers-admin
+      summary: Верифицировать привязку
+      operationId: verifyProviderBinding
+      description: |
+        Проверяет, что внешний ресурс существует у Provider. `UNVERIFIED → ACTIVE`, либо `BROKEN`, если ресурс не найден. Обновляет `lastVerifiedAt`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/BindingId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Привязка верифицирована.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderResourceBinding'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Provider недоступен; привязка остаётся в текущем статусе.
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/bindings/{bindingId}:
+    delete:
+      tags:
+        - computers-admin
+      summary: Отвязать ресурс от Provider
+      operationId: deleteProviderBinding
+      description: |
+        Отключает привязку (`DISABLED`, soft-delete). Ресурс остаётся в инвентаре Visora, но перестаёт синхронизироваться. Ресурс с активной сессией → `409`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/BindingId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  maxLength: 240
+            examples:
+              unbind:
+                value:
+                  reason: Компьютер переведён на другую интеграцию
+      responses:
+        '204':
+          description: Привязка отключена.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /clubs:
     get:
       tags:
@@ -4290,12 +5383,24 @@ components:
         - CLUB_SLUG_TAKEN
         - CLUB_NOT_PUBLISHED
         - CLUB_MAINTENANCE
-        - CLUB_CLOSED
         - CLUB_HAS_ACTIVE_RESERVATIONS
         - WORKING_HOURS_OVERLAP
         - INVALID_WORKING_HOURS
         - CLOSURE_NOT_FOUND
         - CLOSURE_CONFLICT
+        - COMPUTER_NOT_FOUND
+        - COMPUTER_NUMBER_TAKEN
+        - COMPUTER_MAINTENANCE
+        - COMPUTER_DISABLED
+        - COMPUTER_HAS_ACTIVE_RESERVATIONS
+        - ZONE_NOT_FOUND
+        - RESOURCE_NOT_FOUND
+        - PROVIDER_CONNECTION_NOT_FOUND
+        - PROVIDER_CONNECTION_DISABLED
+        - PROVIDER_HEALTH_CHECK_FAILED
+        - BINDING_NOT_FOUND
+        - BINDING_ALREADY_EXISTS
+        - RESOURCE_ALREADY_BOUND
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -6863,6 +7968,650 @@ components:
             - 'null'
           format: date-time
           description: Ожидаемое завершение (для `MAINTENANCE`); необязательно.
+    ResourceStatus:
+      type: string
+      description: |
+        Операционный статус ресурса, которым владеет Visora (не путать с наблюдаемым состоянием Provider).
+        `MAINTENANCE`/`DISABLED` блокируют бронирование независимо от проекции Provider.
+      enum:
+        - ACTIVE
+        - MAINTENANCE
+        - DISABLED
+        - RETIRED
+      x-enum-descriptions:
+        ACTIVE: Доступен для бронирования.
+        MAINTENANCE: Техническое обслуживание; новые брони блокируются (422 COMPUTER_MAINTENANCE).
+        DISABLED: Отключён вручную; невидим в каталоге.
+        RETIRED: Выведен из эксплуатации (soft-delete).
+      example: ACTIVE
+    ZoneType:
+      type: string
+      description: Тип зоны клуба.
+      enum:
+        - GENERAL
+        - VIP
+        - PRIVATE
+        - OTHER
+      x-enum-descriptions:
+        GENERAL: Общий зал.
+        VIP: ВИП-зона (обычно повышенная цена).
+        PRIVATE: Отдельная комната.
+        OTHER: Прочее.
+      example: VIP
+    Computer:
+      type: object
+      description: Полный компьютер (управляемый вид) — общий резервируемый ресурс + специализированные поля + операционный статус + наблюдаемая проекция Provider.
+      required:
+        - id
+        - resourceId
+        - organizationId
+        - clubId
+        - zoneId
+        - number
+        - displayName
+        - resourceStatus
+        - capacity
+        - pricePerHourMinor
+        - currency
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        resourceId:
+          type: string
+          format: uuid
+          description: Общий резервируемый ресурс (reservable_resources); бронирование идёт через него.
+        organizationId:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        zoneId:
+          type: string
+          format: uuid
+        zone:
+          type: object
+          description: Вложенная зона для отображения.
+          properties:
+            id:
+              type: string
+              format: uuid
+            code:
+              type: string
+              maxLength: 50
+            name:
+              type: string
+              maxLength: 120
+            type:
+              $ref: '#/components/schemas/ZoneType'
+        number:
+          type: integer
+          minimum: 1
+          description: Номер в клубе; уникален среди активных компьютеров.
+        displayName:
+          type: string
+          maxLength: 120
+        resourceStatus:
+          $ref: '#/components/schemas/ResourceStatus'
+        capacity:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Вместимость; для компьютера всегда 1.
+        hardware:
+          type: object
+          description: Описание комплектующих (витрина и фильтры).
+          properties:
+            gpu:
+              type:
+                - string
+                - 'null'
+              maxLength: 160
+              example: RTX 4070
+            cpu:
+              type:
+                - string
+                - 'null'
+              maxLength: 160
+              example: Ryzen 7 7800X3D
+            ramGb:
+              type:
+                - integer
+                - 'null'
+              minimum: 1
+              example: 32
+            monitor:
+              type:
+                - string
+                - 'null'
+              maxLength: 160
+              example: 27" 240Hz
+            monitorRefreshHz:
+              type:
+                - integer
+                - 'null'
+              minimum: 1
+              example: 240
+        pricePerHourMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Эффективная цена с учётом `priceOverrideMinor`; иначе базовая цена клуба.
+        currency:
+          type: string
+          maxLength: 3
+        priceOverrideMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^-?\d+$
+          description: Прямое переопределение почасовой цены ресурса (гибкие правила — в Pricing).
+        availabilityOverride:
+          type:
+            - string
+            - 'null'
+          description: Принудительная доступность `AVAILABLE`/`UNAVAILABLE` (строго аудируется), опционально с истечением.
+        availabilityOverrideUntil:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        providerState:
+          $ref: '#/components/schemas/ProviderResourceState'
+        lastProviderStateAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Freshness проекции; stale state → бронь запрещена либо degraded policy.
+        binding:
+          type:
+            - object
+            - 'null'
+          description: Активная привязка к Provider (если есть).
+          properties:
+            id:
+              type: string
+              format: uuid
+            providerConnectionId:
+              type: string
+              format: uuid
+            providerDisplayName:
+              type: string
+              maxLength: 120
+            externalResourceId:
+              type: string
+              maxLength: 255
+            bindingStatus:
+              $ref: '#/components/schemas/BindingStatus'
+            lastVerifiedAt:
+              type:
+                - string
+                - 'null'
+              format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ComputerSummary:
+      type: object
+      description: Публичная краткая карточка компьютера для витрины/карты бронирования.
+      required:
+        - id
+        - resourceId
+        - clubId
+        - zoneId
+        - zoneCode
+        - number
+        - displayName
+        - resourceStatus
+        - pricePerHourMinor
+        - currency
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор компьютера (subtype).
+        resourceId:
+          type: string
+          format: uuid
+          description: Общий резервируемый ресурс; аллокации броней ссылаются на него.
+        clubId:
+          type: string
+          format: uuid
+        zoneId:
+          type: string
+          format: uuid
+        zoneCode:
+          type: string
+          maxLength: 50
+          description: Стабильный код зоны (например `vip-2`).
+        zoneName:
+          type: string
+          maxLength: 120
+        number:
+          type: integer
+          minimum: 1
+          description: Человеко-понятный номер компьютера в клубе.
+        displayName:
+          type: string
+          maxLength: 120
+        resourceStatus:
+          $ref: '#/components/schemas/ResourceStatus'
+        pricePerHourMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Эффективная почасовая цена в minor units (базовая цена клуба с учётом переопределения ресурса).
+          example: '120000'
+        currency:
+          type: string
+          maxLength: 3
+          example: KZT
+        providerState:
+          $ref: '#/components/schemas/ProviderResourceState'
+        lastProviderStateAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Freshness наблюдаемого состояния. Старое состояние не трактуется как гарантированно актуальное.
+    ComputerCreateRequest:
+      type: object
+      description: Создание компьютера. В одной транзакции создаются общий резервируемый ресурс (resource_type=COMPUTER, capacity=1, ACTIVE) и строка computers.
+      required:
+        - zoneId
+        - number
+        - displayName
+      properties:
+        zoneId:
+          type: string
+          format: uuid
+          description: Зона клуба. Обязательна — без зоны нет группы, цены и отображения.
+        number:
+          type: integer
+          minimum: 1
+          description: Номер компьютера в клубе; занят = `409 COMPUTER_NUMBER_TAKEN`.
+          example: 12
+        displayName:
+          type: string
+          maxLength: 120
+          example: PC 12
+        hardware:
+          type: object
+          description: Описание комплектующих.
+          properties:
+            gpu:
+              type: string
+              maxLength: 160
+              example: RTX 4070
+            cpu:
+              type: string
+              maxLength: 160
+              example: Ryzen 7 7800X3D
+            ramGb:
+              type: integer
+              minimum: 1
+              example: 32
+            monitor:
+              type: string
+              maxLength: 160
+              example: 27" 240Hz
+            monitorRefreshHz:
+              type: integer
+              minimum: 1
+              example: 240
+        priceOverrideMinor:
+          type: string
+          pattern: ^\d+$
+          description: Прямое переопределение почасовой цены (minor units).
+          example: '130000'
+    ComputerUpdateRequest:
+      type: object
+      description: Обновление компьютера. Незаполненные поля не изменяются. Смена зоны/цены не влияет на существующие брони.
+      properties:
+        zoneId:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          minimum: 1
+          description: Смена номера → проверка уникальности (`409 COMPUTER_NUMBER_TAKEN`).
+        displayName:
+          type: string
+          maxLength: 120
+        hardware:
+          type: object
+          description: Полная замена блока комплектующих.
+          properties:
+            gpu:
+              type:
+                - string
+                - 'null'
+              maxLength: 160
+            cpu:
+              type:
+                - string
+                - 'null'
+              maxLength: 160
+            ramGb:
+              type:
+                - integer
+                - 'null'
+              minimum: 1
+            monitor:
+              type:
+                - string
+                - 'null'
+              maxLength: 160
+            monitorRefreshHz:
+              type:
+                - integer
+                - 'null'
+              minimum: 1
+        priceOverrideMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^\d+$
+          description: Прямое переопределение почасовой цены; `null` — убрать переопределение.
+    ComputerActionRequest:
+      type: object
+      description: Действие операционного статуса компьютера (maintenance/disable/restore). Для maintenance/disable требуется причина; опционально `untilAt`.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          maxLength: 240
+          description: Причина действия; аудируется.
+        untilAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Плановое окончание (например, ремонт до вечера). Необязательно; статус не снимается автоматически.
+    ProviderConnectionStatus:
+      type: string
+      description: Статус подключения к Provider (Gizmo и др.).
+      enum:
+        - PENDING
+        - ACTIVE
+        - DEGRADED
+        - DISABLED
+      x-enum-descriptions:
+        PENDING: Создано, ещё не проверено.
+        ACTIVE: Health check успешен; интеграция работает.
+        DEGRADED: Работает с частичными capability/ошибками.
+        DISABLED: Отключено; ресурсы видны, но синхронизация остановлена.
+      example: ACTIVE
+    ProviderConnection:
+      type: object
+      description: Подключение клуба к внешнему Provider (Gizmo или будущий адаптер). Секреты не хранятся — только reference на secret manager/KMS.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - providerType
+        - displayName
+        - status
+        - capabilities
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        providerType:
+          type: string
+          maxLength: 50
+          description: Тип адаптера. MVP — `GIZMO`.
+          example: GIZMO
+        displayName:
+          type: string
+          maxLength: 120
+          example: Gizmo Main Hall
+        status:
+          $ref: '#/components/schemas/ProviderConnectionStatus'
+        baseUrl:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: Endpoint Provider; allowlist + защита от SSRF.
+        capabilities:
+          $ref: '#/components/schemas/ProviderCapabilities'
+        configuration:
+          type: object
+          description: Не-секретная конфигурация адаптера (jsonb).
+          additionalProperties: true
+        lastHealthCheckAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        lastSuccessAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        lastErrorCode:
+          type:
+            - string
+            - 'null'
+          maxLength: 100
+          description: Санитизированный код ошибки интеграции.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProviderConnectionCreateRequest:
+      type: object
+      description: Создание подключения к Provider. Секрет задаётся через secret manager out-of-band (в теле никогда не передаётся).
+      required:
+        - providerType
+        - displayName
+        - baseUrl
+      properties:
+        providerType:
+          type: string
+          maxLength: 50
+          description: Тип адаптера; должен соответствовать зарегистрированному адаптеру.
+          example: GIZMO
+        displayName:
+          type: string
+          maxLength: 120
+          example: Gizmo Main Hall
+        baseUrl:
+          type: string
+          maxLength: 500
+          format: uri
+          description: Endpoint Provider; валидируется allowlist, защита от SSRF.
+          example: https://gizmo.example.kz/api
+        configuration:
+          type: object
+          description: Не-секретная конфигурация адаптера (jsonb).
+          additionalProperties: true
+    ProviderConnectionUpdateRequest:
+      type: object
+      description: Обновление подключения к Provider. Изменение `baseUrl` переводит статус в `PENDING` до успешной проверки.
+      properties:
+        displayName:
+          type: string
+          maxLength: 120
+        baseUrl:
+          type: string
+          maxLength: 500
+          format: uri
+        configuration:
+          type: object
+          description: Deep merge не-секретной конфигурации.
+          additionalProperties: true
+    ProviderCapabilities:
+      type: object
+      description: Обнаруженные capability адаптера (что умеет конкретный Provider).
+      properties:
+        realtimeState:
+          type: boolean
+          description: Отдаёт состояние ресурсов в реальном времени.
+        startSession:
+          type: boolean
+        stopSession:
+          type: boolean
+        lockResource:
+          type: boolean
+        unlockResource:
+          type: boolean
+        webhooks:
+          type: boolean
+          description: Поддерживает webhooks вместо/вместе с polling.
+        polling:
+          type: boolean
+      example:
+        realtimeState: true
+        startSession: true
+        stopSession: true
+        lockResource: true
+        unlockResource: true
+        webhooks: true
+        polling: false
+    ProviderHealthCheck:
+      type: object
+      description: Результат проверки подключения к Provider (health check).
+      required:
+        - ok
+        - checkedAt
+      properties:
+        ok:
+          type: boolean
+          description: Достижим ли Provider и валидна ли аутентификация.
+        status:
+          $ref: '#/components/schemas/ProviderConnectionStatus'
+          description: Итоговый статус подключения после проверки.
+        latencyMs:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          description: Время ответа.
+        capabilities:
+          $ref: '#/components/schemas/ProviderCapabilities'
+          description: Обнаруженные capability (заполняются при успехе).
+        errorCode:
+          type:
+            - string
+            - 'null'
+          maxLength: 100
+          description: Машиночитаемый код ошибки при неудаче (например `PROVIDER_UNAUTHORIZED`).
+        detail:
+          type:
+            - string
+            - 'null'
+          description: Человеко-понятное описание (не содержит секретов).
+        checkedAt:
+          type: string
+          format: date-time
+    BindingStatus:
+      type: string
+      description: Статус привязки ресурса к внешнему идентификатору Provider.
+      enum:
+        - ACTIVE
+        - UNVERIFIED
+        - BROKEN
+        - DISABLED
+      x-enum-descriptions:
+        ACTIVE: Привязка подтверждена и используется.
+        UNVERIFIED: Привязка создана, но ещё не проверена.
+        BROKEN: Внешний ресурс не найден у Provider; синхронизация пропускается.
+        DISABLED: Привязка отключена.
+      example: ACTIVE
+    ProviderResourceBinding:
+      type: object
+      description: Привязка резервируемого ресурса Visora к внешнему идентификатору Provider. Внешние ID не протекают в доменные ключи.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - providerConnectionId
+        - resourceId
+        - externalResourceId
+        - bindingStatus
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        providerConnectionId:
+          type: string
+          format: uuid
+        resourceId:
+          type: string
+          format: uuid
+          description: Резервируемый ресурс Visora (Computer или VIP-комната).
+        computerNumber:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: Диагностический номер компьютера (если ресурс — компьютер).
+        externalResourceId:
+          type: string
+          maxLength: 255
+          description: Идентификатор ресурса в терминах Provider (opaque, case-sensitive по контракту).
+          example: GZ-CMP-012
+        externalDisplayName:
+          type:
+            - string
+            - 'null'
+          maxLength: 255
+          description: Диагностическое имя на стороне Provider.
+        bindingStatus:
+          $ref: '#/components/schemas/BindingStatus'
+        lastVerifiedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProviderResourceBindingCreateRequest:
+      type: object
+      description: Создание привязки ресурса Visora к ресурсу Provider.
+      required:
+        - resourceId
+        - externalResourceId
+      properties:
+        resourceId:
+          type: string
+          format: uuid
+          description: Резервируемый ресурс в рамках клуба подключения.
+        externalResourceId:
+          type: string
+          maxLength: 255
+          description: Идентификатор ресурса у Provider. Занят на этом подключении = `409 BINDING_ALREADY_EXISTS`.
+          example: GZ-CMP-012
   parameters:
     ReservationId:
       name: reservationId
@@ -7213,6 +8962,58 @@ components:
         maxLength: 2
         pattern: ^[A-Z]{2}$
       example: KZ
+    ComputerId:
+      name: computerId
+      in: path
+      required: true
+      description: Идентификатор компьютера (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+    ProviderConnectionId:
+      name: connectionId
+      in: path
+      required: true
+      description: Идентификатор подключения к Provider (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+    BindingId:
+      name: bindingId
+      in: path
+      required: true
+      description: Идентификатор привязки ресурса к Provider (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 6a5b4c3d-2e1f-4d5e-8f0a-1b2c3d4e5f6a
+    ZoneQuery:
+      name: zoneId
+      in: query
+      required: false
+      description: Фильтр компьютеров по зоне (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+    ResourceStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр по операционному статусу ресурса.
+      schema:
+        $ref: '#/components/schemas/ResourceStatus'
+      example: ACTIVE
+    BindingStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр привязок по статусу.
+      schema:
+        $ref: '#/components/schemas/BindingStatus'
+      example: ACTIVE
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -8091,6 +9892,161 @@ components:
             createdByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
             createdAt: '2026-08-10T09:00:00Z'
             updatedAt: '2026-08-10T09:00:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 1
+          hasNextPage: false
+    ComputerListExample:
+      summary: Список компьютеров клуба (публичный)
+      value:
+        data:
+          - id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            zoneCode: vip-2
+            zoneName: VIP Zone 2
+            number: 12
+            displayName: PC 12
+            resourceStatus: ACTIVE
+            pricePerHourMinor: '130000'
+            currency: KZT
+            providerState: AVAILABLE
+            lastProviderStateAt: '2026-08-04T10:39:00Z'
+          - id: 4a5b6c7d-8e9f-4a1b-8c2d-3e4f5a6b7c8d
+            resourceId: 4a5b6c7d-8e9f-4a1b-8c2d-3e4f5a6b7c8d
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            zoneId: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+            zoneCode: general-1
+            zoneName: Основной зал
+            number: 5
+            displayName: PC 5
+            resourceStatus: ACTIVE
+            pricePerHourMinor: '120000'
+            currency: KZT
+            providerState: IN_USE
+            lastProviderStateAt: '2026-08-04T10:41:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    ComputerDetailExample:
+      summary: Компьютер (управляемый вид)
+      value:
+        data:
+          id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+          zone:
+            id: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            code: vip-2
+            name: VIP Zone 2
+            type: VIP
+          number: 12
+          displayName: PC 12
+          resourceStatus: ACTIVE
+          capacity: 1
+          hardware:
+            gpu: RTX 4070
+            cpu: Ryzen 7 7800X3D
+            ramGb: 32
+            monitor: 27" 240Hz
+            monitorRefreshHz: 240
+          pricePerHourMinor: '130000'
+          currency: KZT
+          priceOverrideMinor: '130000'
+          providerState: AVAILABLE
+          lastProviderStateAt: '2026-08-04T10:39:00Z'
+          binding:
+            id: 6a5b4c3d-2e1f-4d5e-8f0a-1b2c3d4e5f6a
+            providerConnectionId: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+            providerDisplayName: Gizmo Main Hall
+            externalResourceId: GZ-CMP-012
+            bindingStatus: ACTIVE
+            lastVerifiedAt: '2026-08-04T09:00:00Z'
+          createdAt: '2026-07-05T08:00:00Z'
+          updatedAt: '2026-08-04T10:39:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ComputerCreateExample:
+      summary: Создание компьютера
+      value:
+        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        number: 12
+        displayName: PC 12
+        hardware:
+          gpu: RTX 4070
+          cpu: Ryzen 7 7800X3D
+          ramGb: 32
+        priceOverrideMinor: '130000'
+    ProviderConnectionExample:
+      summary: Подключение к Provider
+      value:
+        data:
+          id: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          providerType: GIZMO
+          displayName: Gizmo Main Hall
+          status: ACTIVE
+          baseUrl: https://gizmo.example.kz/api
+          capabilities:
+            realtimeState: true
+            startSession: true
+            stopSession: true
+            lockResource: true
+            unlockResource: true
+            webhooks: true
+            polling: false
+          configuration:
+            pollIntervalSeconds: 15
+          lastHealthCheckAt: '2026-08-04T10:00:00Z'
+          lastSuccessAt: '2026-08-04T10:39:00Z'
+          createdAt: '2026-07-06T09:00:00Z'
+          updatedAt: '2026-08-04T10:00:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ProviderHealthCheckExample:
+      summary: Результат проверки подключения
+      value:
+        data:
+          ok: true
+          status: ACTIVE
+          latencyMs: 42
+          capabilities:
+            realtimeState: true
+            startSession: true
+            stopSession: true
+            lockResource: true
+            unlockResource: true
+            webhooks: true
+            polling: false
+          checkedAt: '2026-08-04T10:45:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:45:00Z'
+    BindingsExample:
+      summary: Привязки ресурсов к Provider (список)
+      value:
+        data:
+          - id: 6a5b4c3d-2e1f-4d5e-8f0a-1b2c3d4e5f6a
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            providerConnectionId: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+            resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            computerNumber: 12
+            externalResourceId: GZ-CMP-012
+            externalDisplayName: Gizmo
+            bindingStatus: ACTIVE
+            lastVerifiedAt: '2026-08-04T09:00:00Z'
+            createdAt: '2026-07-06T10:00:00Z'
+            updatedAt: '2026-08-04T09:00:00Z'
         meta:
           page: 1
           pageSize: 20

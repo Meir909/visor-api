@@ -1,0 +1,49 @@
+type: object
+description: Создание компьютера. В одной транзакции создаются общий резервируемый ресурс (resource_type=COMPUTER, capacity=1, ACTIVE) и строка computers.
+required:
+  - zoneId
+  - number
+  - displayName
+properties:
+  zoneId:
+    type: string
+    format: uuid
+    description: Зона клуба. Обязательна — без зоны нет группы, цены и отображения.
+  number:
+    type: integer
+    minimum: 1
+    description: Номер компьютера в клубе; занят = `409 COMPUTER_NUMBER_TAKEN`.
+    example: 12
+  displayName:
+    type: string
+    maxLength: 120
+    example: PC 12
+  hardware:
+    type: object
+    description: Описание комплектующих.
+    properties:
+      gpu:
+        type: string
+        maxLength: 160
+        example: RTX 4070
+      cpu:
+        type: string
+        maxLength: 160
+        example: Ryzen 7 7800X3D
+      ramGb:
+        type: integer
+        minimum: 1
+        example: 32
+      monitor:
+        type: string
+        maxLength: 160
+        example: 27" 240Hz
+      monitorRefreshHz:
+        type: integer
+        minimum: 1
+        example: 240
+  priceOverrideMinor:
+    type: string
+    pattern: '^\d+$'
+    description: Прямое переопределение почасовой цены (minor units).
+    example: '130000'

@@ -1,0 +1,27 @@
+type: object
+description: Обнаруженные capability адаптера (что умеет конкретный Provider).
+properties:
+  realtimeState:
+    type: boolean
+    description: Отдаёт состояние ресурсов в реальном времени.
+  startSession:
+    type: boolean
+  stopSession:
+    type: boolean
+  lockResource:
+    type: boolean
+  unlockResource:
+    type: boolean
+  webhooks:
+    type: boolean
+    description: Поддерживает webhooks вместо/вместе с polling.
+  polling:
+    type: boolean
+example:
+  realtimeState: true
+  startSession: true
+  stopSession: true
+  lockResource: true
+  unlockResource: true
+  webhooks: true
+  polling: false
