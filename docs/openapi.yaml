@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны) и **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы). Остальные модули (Pricing, Notifications, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы) и **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони). Остальные модули (Pricing, Notifications, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -723,7 +723,505 @@ tags:
       - `POPULAR_RESOURCES` — топ ресурсов.
 
       **Ошибки:** `422 ANALYTICS_RANGE_TOO_LARGE` (период больше ретенции/лимита точек), `422 INVALID_GRANULARITY`, `503 ANALYTICS_NOT_READY` (проектор ещё не догнал watermark).
+  - name: admin
+    description: |-
+      # Сотрудник клуба (Admin facade)
+
+      Сценарии сотрудника, которых нет в предметных модулях: **walk-in бронь** от имени клуба для гостя без аккаунта и просмотр **использованных купонов**.
+
+      **Ключевое правило:** Admin не дублирует доменные правила Reservations/Clubs/Pricing — он вызывает их публичные use cases. Часть операций сотрудника живёт в профильных модулях: очередь/check-in/no-show/move/extension — в `reservations`, расписание — в `clubs`, maintenance — в `computers`.
+
+      ## Walk-in
+
+      ```mermaid
+      flowchart LR
+          A[Admin] --> W[POST /admin/reservations/walk-in]
+          W --> V[Reservations правила: горизонт, длительность, пересечения]
+          W --> D[Скидка по коду, если указана]
+          W --> R[Создаётся полноценная бронь source=ADMIN]
+      ```
+  - name: admin-promotions
+    description: |-
+      # Промо и скидки (Admin / Pricing)
+
+      Управление промо клуба: купоны, процентные/фиксированные скидки, лимиты, включение/выключение и мягкое удаление.
+
+      **Разрешения:** `pricing.promotion` — CLUB_ADMIN (свои клубы) и ORG_OWNER.
+
+      ## Жизненный цикл промо
+
+      ```mermaid
+      flowchart TD
+          C[POST .../discounts] --> A[ACTIVE/SCHEDULED]
+          A --> D[POST .../activate]
+          A --> O[POST .../deactivate → INACTIVE]
+          A --> DEL[DELETE → мягкое удаление]
+          A --> E[срок истёк → EXPIRED]
+      ```
+
+      **Ошибки:** `DISCOUNT_CODE_TAKEN`, `DISCOUNT_TYPE_CONFLICT`, `DISCOUNT_INVALID_PERIOD`, `DISCOUNT_EXPIRED`, `DISCOUNT_LIMIT_REACHED`.
 paths:
+  /organizations/{organizationId}/clubs/{clubId}/discounts:
+    get:
+      tags:
+        - admin-promotions
+      summary: Список промо/скидок клуба
+      operationId: listDiscounts
+      description: |-
+        Промо и скидки клуба, включая неактивные и просроченные. Фильтры по типу и статусу.
+
+        **Правила:**
+        - Разрешение `pricing.promotion`; CLUB_ADMIN — только свои клубы.
+        - `status` — вычисляемый (ACTIVE/SCHEDULED/EXPIRED/INACTIVE) от `isActive` и периода.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountTypeQuery'
+        - $ref: '#/components/parameters/DiscountStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Промо клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Discount'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                discounts:
+                  $ref: '#/components/examples/DiscountListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    post:
+      tags:
+        - admin-promotions
+      summary: Создать промо/скидку
+      operationId: createDiscount
+      description: |-
+        Создание промо клуба. Код купона уникален в клубе; пустой `code` означает промо, применяемое вручную.
+
+        **Бизнес-правила:**
+        - `FIXED_AMOUNT` требует `amountMinor` + `currency`; `PERCENTAGE` — `percentageBasisPoints`.
+        - `validUntil` строго позже `validFrom`.
+        - Лимиты и минимальная сумма — nullable; превышение периода → `422`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountCreateRequest'
+            examples:
+              create:
+                $ref: '#/components/examples/DiscountCreateExample'
+      responses:
+        '201':
+          description: Промо создано.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Discount'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/DiscountDetailExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}:
+    get:
+      tags:
+        - admin-promotions
+      summary: Детали промо/скидки
+      operationId: getDiscount
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Промо.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Discount'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                discount:
+                  $ref: '#/components/examples/DiscountDetailExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - admin-promotions
+      summary: Обновить промо/скидку
+      operationId: updateDiscount
+      description: |-
+        Обновление полей промо. Передаваемые поля перезаписываются.
+
+        **Правила:** смена `discountType` требует согласованной замены `amountMinor`/`percentageBasisPoints`; применяется полиска консистентности → иначе `422 DISCOUNT_TYPE_CONFLICT`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountUpdateRequest'
+      responses:
+        '200':
+          description: Промо обновлено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Discount'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                updated:
+                  $ref: '#/components/examples/DiscountDetailExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+        - admin-promotions
+      summary: Удалить промо/скидку
+      operationId: deleteDiscount
+      description: |-
+        Мягкое удаление промо (`deleted_at`). Исторические redemptions сохраняются, купон больше не применим.
+
+        **Правила:** удаление не затрагивает уже применённые скидки.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Промо удалено.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/activate:
+    post:
+      tags:
+        - admin-promotions
+      summary: Активировать промо
+      operationId: activateDiscount
+      description: |-
+        Включить промо вручную (`isActive: true`). Промо остаётся в пределах своего периода действия.
+
+        **Правила:** если период истёк → `422 DISCOUNT_EXPIRED`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountActionRequest'
+      responses:
+        '200':
+          description: Промо активировано.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Discount'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/deactivate:
+    post:
+      tags:
+        - admin-promotions
+      summary: Деактивировать промо
+      operationId: deactivateDiscount
+      description: Вручную выключить промо, `isActive` становится `false`. Не влияет на уже применённые скидки.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountActionRequest'
+      responses:
+        '200':
+          description: Промо деактивировано.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Discount'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/redemptions:
+    get:
+      tags:
+        - admin
+      summary: Использования конкретного промо
+      operationId: listDiscountRedemptions
+      description: |-
+        Записи об использовании промо (redemptions) с фильтром по статусу. Показывает, кто и когда применял скидку.
+
+        **Разрешение:** `pricing.promotion`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/DiscountId'
+        - $ref: '#/components/parameters/RedemptionStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Использования промо.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Redemption'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                redemptions:
+                  $ref: '#/components/examples/RedemptionsExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/redemptions:
+    get:
+      tags:
+        - admin
+      summary: Все использованные купоны клуба
+      operationId: listClubRedemptions
+      description: |-
+        Все redemptions клуба за период (пересечение всех промо), для отчётности и контроля лимитов.
+
+        **Разрешение:** `pricing.promotion`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/RedemptionStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Использования купонов.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Redemption'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                redemptions:
+                  $ref: '#/components/examples/RedemptionsExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/reservations/walk-in:
+    post:
+      tags:
+        - admin
+      summary: Создать guest-бронь (walk-in)
+      operationId: createWalkInReservation
+      description: |-
+        Бронь от имени клуба для гостя без личного аккаунта. Игрок получает номер брони без входа в систему.
+
+        **Правила:**
+        - Разрешения: `reservation.check_in.club`/`admin` в скоупе клуба.
+        - Повторяет валидацию Reservations: горизонт 24 ч, длительность ≤ 10 ч, без пересечений, ресурсы клуба.
+        - `source` = `ADMIN`. Результат — полноценная бронь (создаётся по тем же правилам, что и игроком).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalkInReservationRequest'
+            examples:
+              walkIn:
+                $ref: '#/components/examples/WalkInReservationRequestExample'
+      responses:
+        '201':
+          description: Guest-бронь создана.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Reservation'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/WalkInReservationResponseExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /organizations/{organizationId}/analytics/overview:
     get:
       tags:
@@ -6429,6 +6927,16 @@ components:
         - ANALYTICS_RANGE_TOO_LARGE
         - INVALID_GRANULARITY
         - ANALYTICS_NOT_READY
+        - DISCOUNT_NOT_FOUND
+        - DISCOUNT_CODE_TAKEN
+        - DISCOUNT_TYPE_CONFLICT
+        - DISCOUNT_INVALID_PERIOD
+        - DISCOUNT_EXPIRED
+        - DISCOUNT_INACTIVE
+        - DISCOUNT_LIMIT_REACHED
+        - DISCOUNT_NOT_APPLICABLE
+        - REDEMPTION_NOT_FOUND
+        - REDEMPTION_ALREADY_USED
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -6650,9 +7158,11 @@ components:
           description: Название клуба (denormalized для отображения).
           example: Cyber Arena
         playerUserId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          description: Основной игрок / владелец брони.
+          description: Основной игрок / владелец брони. `null` для guest-брони (walk-in), созданной клубом без аккаунта игрока.
         reservationNumber:
           type: string
           maxLength: 32
@@ -10487,6 +10997,458 @@ components:
           minimum: 0
           description: Число активных клубов, включённых в сводку.
           example: 2
+    DiscountType:
+      type: string
+      description: Тип скидочного механизма промо.
+      enum:
+        - PERCENTAGE
+        - FIXED_AMOUNT
+    DiscountStatus:
+      type: string
+      description: Вычисляемый операционный статус промо. Производный от `isActive` и периода `validFrom`/`validUntil`.
+      enum:
+        - SCHEDULED
+        - ACTIVE
+        - EXPIRED
+        - INACTIVE
+    Discount:
+      type: object
+      description: Промо/скидка клуба. Отдельно от базовых правил ценообразования.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - name
+        - discountType
+        - validFrom
+        - validUntil
+        - isActive
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор промо.
+          example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+        organizationId:
+          type: string
+          format: uuid
+          description: Tenant организации.
+          example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId:
+          type: string
+          format: uuid
+          description: Клуб, к которому относится промо.
+          example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        code:
+          type:
+            - string
+            - 'null'
+          description: Код купона для применения игроком (уникален в клубе) или null.
+          maxLength: 64
+          example: WELCOME10
+        name:
+          type: string
+          maxLength: 160
+          description: Название промо.
+          example: Приветственный 10%
+        description:
+          type:
+            - string
+            - 'null'
+          description: Описание для администратора.
+          example: Скидка на первую бронь для новых игроков
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        amountMinor:
+          type:
+            - string
+            - 'null'
+          description: Фиксированная скидка в minor units (для `FIXED_AMOUNT`).
+          example: '100000'
+        percentageBasisPoints:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          maximum: 10000
+          description: Скидка в базисных пунктах (для `PERCENTAGE`), 100 = 1%.
+          example: 1000
+        currency:
+          type:
+            - string
+            - 'null'
+          description: Валюта ISO 4217 (обязательна для фиксированной скидки).
+          example: KZT
+        validFrom:
+          type: string
+          format: date-time
+          description: Начало действия промо.
+          example: '2026-08-05T00:00:00Z'
+        validUntil:
+          type: string
+          format: date-time
+          description: Окончание действия промо (exclusive).
+          example: '2026-09-05T00:00:00Z'
+        totalRedemptionLimit:
+          type:
+            - integer
+            - 'null'
+          description: Глобальный лимит применений или null.
+          example: 500
+        perUserRedemptionLimit:
+          type:
+            - integer
+            - 'null'
+          description: Лимит применений на пользователя или null.
+          example: 1
+        minimumAmountMinor:
+          type:
+            - string
+            - 'null'
+          description: Минимальная сумма брони для применения в minor units.
+          example: '600000'
+        maximumDiscountMinor:
+          type:
+            - string
+            - 'null'
+          description: Потолок скидки в minor units (для процентов).
+          example: '150000'
+        isActive:
+          type: boolean
+          description: Операционное состояние (вкл/выкл вручную).
+          example: true
+        status:
+          $ref: '#/components/schemas/DiscountStatus'
+        usedRedemptions:
+          type: integer
+          description: Текущее число использований (для контроля лимитов).
+          example: 87
+        createdAt:
+          type: string
+          format: date-time
+          description: Время создания.
+          example: '2026-07-05T08:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          description: Время последнего обновления.
+          example: '2026-08-04T10:40:00Z'
+    DiscountCreateRequest:
+      type: object
+      description: Создание промо/скидки клуба.
+      required:
+        - name
+        - discountType
+        - validFrom
+        - validUntil
+      properties:
+        code:
+          type: string
+          description: Код купона (уникален в клубе). Без кода промо не применяется игроком вручную.
+          maxLength: 64
+          pattern: ^[A-Z0-9_-]+$
+          example: WELCOME10
+        name:
+          type: string
+          maxLength: 160
+          description: Название промо.
+          example: Приветственный 10%
+        description:
+          type: string
+          description: Описание для администратора.
+          example: Скидка на первую бронь для новых игроков
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        amountMinor:
+          type: string
+          description: Фиксированная скидка в minor units. Обязателен при `FIXED_AMOUNT`.
+          pattern: ^\d+$
+          example: '100000'
+        percentageBasisPoints:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: Скидка в базисных пунктах. Обязателен при `PERCENTAGE` (100 = 1%).
+          example: 1000
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: Валюта ISO 4217. Обязательна при `FIXED_AMOUNT`.
+          example: KZT
+        validFrom:
+          type: string
+          format: date-time
+          description: Начало действия промо.
+          example: '2026-08-05T00:00:00Z'
+        validUntil:
+          type: string
+          format: date-time
+          description: Окончание действия промо. Строго позже `validFrom`.
+          example: '2026-09-05T00:00:00Z'
+        totalRedemptionLimit:
+          type: integer
+          minimum: 1
+          description: Глобальный лимит применений.
+          example: 500
+        perUserRedemptionLimit:
+          type: integer
+          minimum: 1
+          description: Лимит применений на пользователя.
+          example: 1
+        minimumAmountMinor:
+          type: string
+          pattern: ^\d+$
+          description: Минимальная сумма брони для применения в minor units.
+          example: '600000'
+        maximumDiscountMinor:
+          type: string
+          pattern: ^\d+$
+          description: Потолок скидки в minor units.
+          example: '150000'
+    DiscountUpdateRequest:
+      type: object
+      description: Обновление промо/скидки. Поля перезаписываются только при передаче.
+      properties:
+        code:
+          type:
+            - string
+            - 'null'
+          maxLength: 64
+          description: Код купона. `null` удаляет код (промо применяется только вручную).
+          example: WELCOME10
+        name:
+          type: string
+          maxLength: 160
+          example: Приветственный 10%
+        description:
+          type:
+            - string
+            - 'null'
+          example: Скидка на первую бронь для новых игроков
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        amountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^\d+$
+          description: Фиксированная скидка в minor units.
+          example: '100000'
+        percentageBasisPoints:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 10000
+          description: Скидка в базисных пунктах (100 = 1%).
+          example: 1000
+        currency:
+          type:
+            - string
+            - 'null'
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+        validFrom:
+          type: string
+          format: date-time
+          example: '2026-08-05T00:00:00Z'
+        validUntil:
+          type: string
+          format: date-time
+          example: '2026-09-05T00:00:00Z'
+        totalRedemptionLimit:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          example: 500
+        perUserRedemptionLimit:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          example: 1
+        minimumAmountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^\d+$
+          example: '600000'
+        maximumDiscountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^\d+$
+          example: '150000'
+    DiscountActionRequest:
+      type: object
+      description: Действие с промо (активация/деактивация) с опциональной причиной.
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: Причина изменения операционного состояния (для аудита).
+          example: Запуск летней акции
+    RedemptionStatus:
+      type: string
+      description: Статус использования скидки по бронированию.
+      enum:
+        - RESERVED
+        - APPLIED
+        - RELEASED
+    Redemption:
+      type: object
+      description: Запись об использовании скидки бронированием (атомарная, с контролем лимитов).
+      required:
+        - id
+        - organizationId
+        - discountId
+        - reservationId
+        - userId
+        - amountMinor
+        - currency
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор использования.
+          example: 9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d
+        organizationId:
+          type: string
+          format: uuid
+          example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        discountId:
+          type: string
+          format: uuid
+          description: Промо, применённое к резерву.
+          example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+        discountName:
+          type: string
+          description: Название промо (для списков).
+          example: Приветственный 10%
+        discountCode:
+          type:
+            - string
+            - 'null'
+          description: Код купона, если применялся по коду.
+          example: WELCOME10
+        reservationId:
+          type: string
+          format: uuid
+          description: Бронирование, к которому применена скидка.
+          example: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+        reservationNumber:
+          type: string
+          description: Человекочитаемый номер бронирования.
+          example: VR-20260804-00042
+        userId:
+          type: string
+          format: uuid
+          description: Пользователь, получивший скидку.
+          example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        amountMinor:
+          type: string
+          pattern: ^-\d+$|^\d+$
+          description: Фактическая сумма скидки в minor units.
+          example: '60000'
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: KZT
+        status:
+          $ref: '#/components/schemas/RedemptionStatus'
+        releasedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время освобождения после отмены (для `RELEASED`).
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-08-04T10:12:30Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-08-04T10:12:30Z'
+    WalkInReservationRequest:
+      type: object
+      description: Создание брони администратором от имени гостя без личного аккаунта (walk-in).
+      required:
+        - clubId
+        - resourceIds
+        - startAt
+        - endAt
+        - guestName
+      properties:
+        clubId:
+          type: string
+          format: uuid
+          description: Клуб, в котором создаётся бронь.
+          example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        resourceIds:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          description: Ресурсы брони (один VIP room либо компьютеры).
+          items:
+            type: string
+            format: uuid
+          example:
+            - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        startAt:
+          type: string
+          format: date-time
+          description: Начало брони (ISO 8601 UTC).
+          example: '2026-08-04T15:00:00Z'
+        endAt:
+          type: string
+          format: date-time
+          description: Окончание брони (строго позже `startAt`).
+          example: '2026-08-04T17:00:00Z'
+        participantCount:
+          type: integer
+          minimum: 1
+          description: Количество участников (не более суммарной вместимости ресурсов).
+          example: 2
+        guestName:
+          type: string
+          maxLength: 160
+          description: Имя гостя.
+          example: Александр Петров
+        guestPhone:
+          type: string
+          maxLength: 32
+          description: Телефон гостя (опционально, для SMS-уведомлений).
+          example: '+77001234567'
+        guestEmail:
+          type: string
+          format: email
+          description: Email гостя (опционально).
+          example: alex@example.com
+        discountCode:
+          type: string
+          maxLength: 64
+          description: Код купона для применения.
+          example: WELCOME10
+        notes:
+          type: string
+          maxLength: 1000
+          description: Комментарий администратора или пожелания гостя.
+          example: Гостю нужен VR-набор
   parameters:
     ReservationId:
       name: reservationId
@@ -10953,6 +11915,39 @@ components:
         maximum: 50
         default: 10
       example: 10
+    DiscountId:
+      name: discountId
+      in: path
+      required: true
+      description: Идентификатор промо/скидки (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+    DiscountTypeQuery:
+      name: type
+      in: query
+      required: false
+      description: Фильтр промо по типу скидки.
+      schema:
+        $ref: '#/components/schemas/DiscountType'
+      example: PERCENTAGE
+    DiscountStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр промо по вычисляемому статусу.
+      schema:
+        $ref: '#/components/schemas/DiscountStatus'
+      example: ACTIVE
+    RedemptionStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр использований скидки по статусу.
+      schema:
+        $ref: '#/components/schemas/RedemptionStatus'
+      example: APPLIED
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -12400,3 +13395,174 @@ components:
         meta:
           requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
           timestamp: '2026-08-04T10:50:00Z'
+    DiscountListExample:
+      summary: Список промо клуба
+      value:
+        data:
+          - id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            code: WELCOME10
+            name: Приветственный 10%
+            description: Скидка на первую бронь для новых игроков
+            discountType: PERCENTAGE
+            amountMinor: null
+            percentageBasisPoints: 1000
+            currency: KZT
+            validFrom: '2026-08-05T00:00:00Z'
+            validUntil: '2026-09-05T00:00:00Z'
+            totalRedemptionLimit: 500
+            perUserRedemptionLimit: 1
+            minimumAmountMinor: '600000'
+            maximumDiscountMinor: '150000'
+            isActive: true
+            status: ACTIVE
+            usedRedemptions: 87
+            createdAt: '2026-07-05T08:00:00Z'
+            updatedAt: '2026-08-04T10:40:00Z'
+          - id: 7b8c9d0e-1e2f-4a3b-9c4d-5e6f7a8b9c0d
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            code: null
+            name: Фикс 5000 тенге
+            description: Промо от администратора по внутреннему применению
+            discountType: FIXED_AMOUNT
+            amountMinor: '500000'
+            percentageBasisPoints: null
+            currency: KZT
+            validFrom: '2026-08-01T00:00:00Z'
+            validUntil: '2026-08-31T00:00:00Z'
+            totalRedemptionLimit: null
+            perUserRedemptionLimit: 1
+            minimumAmountMinor: '600000'
+            maximumDiscountMinor: null
+            isActive: true
+            status: ACTIVE
+            usedRedemptions: 23
+            createdAt: '2026-07-28T09:00:00Z'
+            updatedAt: '2026-08-01T12:00:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    DiscountDetailExample:
+      summary: Детали промо
+      value:
+        data:
+          id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          code: WELCOME10
+          name: Приветственный 10%
+          description: Скидка на первую бронь для новых игроков
+          discountType: PERCENTAGE
+          amountMinor: null
+          percentageBasisPoints: 1000
+          currency: KZT
+          validFrom: '2026-08-05T00:00:00Z'
+          validUntil: '2026-09-05T00:00:00Z'
+          totalRedemptionLimit: 500
+          perUserRedemptionLimit: 1
+          minimumAmountMinor: '600000'
+          maximumDiscountMinor: '150000'
+          isActive: true
+          status: ACTIVE
+          usedRedemptions: 87
+          createdAt: '2026-07-05T08:00:00Z'
+          updatedAt: '2026-08-04T10:55:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:55:00Z'
+    DiscountCreateExample:
+      summary: Тело создания промо
+      value:
+        code: WELCOME10
+        name: Приветственный 10%
+        description: Скидка на первую бронь для новых игроков
+        discountType: PERCENTAGE
+        percentageBasisPoints: 1000
+        currency: KZT
+        validFrom: '2026-08-05T00:00:00Z'
+        validUntil: '2026-09-05T00:00:00Z'
+        totalRedemptionLimit: 500
+        perUserRedemptionLimit: 1
+        minimumAmountMinor: '600000'
+        maximumDiscountMinor: '150000'
+    RedemptionsExample:
+      summary: Использования промо
+      value:
+        data:
+          - id: 9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            discountId: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+            discountName: Приветственный 10%
+            discountCode: WELCOME10
+            reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+            reservationNumber: VR-20260804-00042
+            userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            amountMinor: '60000'
+            currency: KZT
+            status: APPLIED
+            releasedAt: null
+            createdAt: '2026-08-04T10:12:30Z'
+            updatedAt: '2026-08-04T10:12:30Z'
+          - id: bb2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            discountId: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+            discountName: Приветственный 10%
+            discountCode: WELCOME10
+            reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3d
+            reservationNumber: VR-20260804-00045
+            userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1e
+            amountMinor: '75000'
+            currency: KZT
+            status: APPLIED
+            releasedAt: null
+            createdAt: '2026-08-04T10:40:00Z'
+            updatedAt: '2026-08-04T10:40:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    WalkInReservationExample:
+      $ref: '#/components/examples/WalkInReservationRequestExample'
+    WalkInReservationResponseExample:
+      summary: Созданная guest-бронь
+      value:
+        data:
+          id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          playerUserId: null
+          reservationNumber: VR-20260804-00052
+          status: PENDING
+          startAt: '2026-08-04T15:00:00Z'
+          endAt: '2026-08-04T17:00:00Z'
+          price:
+            subtotalMinor: '600000'
+            discountMinor: '60000'
+            totalMinor: '540000'
+            depositMinor: '108000'
+            currency: KZT
+          version: 1
+          createdAt: '2026-08-04T10:58:00Z'
+          updatedAt: '2026-08-04T10:58:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:58:00Z'
+    WalkInReservationRequestExample:
+      summary: Тело walk-in брони (гость без аккаунта)
+      value:
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        resourceIds:
+          - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        startAt: '2026-08-04T15:00:00Z'
+        endAt: '2026-08-04T17:00:00Z'
+        participantCount: 2
+        guestName: Александр Петров
+        guestPhone: '+77001234567'
+        guestEmail: alex@example.com
+        discountCode: WELCOME10
+        notes: Гостю нужен VR-набор

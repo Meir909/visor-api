@@ -1,0 +1,106 @@
+type: object
+description: Промо/скидка клуба. Отдельно от базовых правил ценообразования.
+required:
+  - id
+  - organizationId
+  - clubId
+  - name
+  - discountType
+  - validFrom
+  - validUntil
+  - isActive
+  - status
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор промо.
+    example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+  organizationId:
+    type: string
+    format: uuid
+    description: Tenant организации.
+    example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+  clubId:
+    type: string
+    format: uuid
+    description: Клуб, к которому относится промо.
+    example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+  code:
+    type: [string, 'null']
+    description: Код купона для применения игроком (уникален в клубе) или null.
+    maxLength: 64
+    example: WELCOME10
+  name:
+    type: string
+    maxLength: 160
+    description: Название промо.
+    example: Приветственный 10%
+  description:
+    type: [string, 'null']
+    description: Описание для администратора.
+    example: Скидка на первую бронь для новых игроков
+  discountType:
+    $ref: './DiscountType.yaml'
+  amountMinor:
+    type: [string, 'null']
+    description: Фиксированная скидка в minor units (для `FIXED_AMOUNT`).
+    example: '100000'
+  percentageBasisPoints:
+    type: [integer, 'null']
+    minimum: 0
+    maximum: 10000
+    description: Скидка в базисных пунктах (для `PERCENTAGE`), 100 = 1%.
+    example: 1000
+  currency:
+    type: [string, 'null']
+    description: Валюта ISO 4217 (обязательна для фиксированной скидки).
+    example: KZT
+  validFrom:
+    type: string
+    format: date-time
+    description: Начало действия промо.
+    example: '2026-08-05T00:00:00Z'
+  validUntil:
+    type: string
+    format: date-time
+    description: Окончание действия промо (exclusive).
+    example: '2026-09-05T00:00:00Z'
+  totalRedemptionLimit:
+    type: [integer, 'null']
+    description: Глобальный лимит применений или null.
+    example: 500
+  perUserRedemptionLimit:
+    type: [integer, 'null']
+    description: Лимит применений на пользователя или null.
+    example: 1
+  minimumAmountMinor:
+    type: [string, 'null']
+    description: Минимальная сумма брони для применения в minor units.
+    example: '600000'
+  maximumDiscountMinor:
+    type: [string, 'null']
+    description: Потолок скидки в minor units (для процентов).
+    example: '150000'
+  isActive:
+    type: boolean
+    description: Операционное состояние (вкл/выкл вручную).
+    example: true
+  status:
+    $ref: './DiscountStatus.yaml'
+  usedRedemptions:
+    type: integer
+    description: Текущее число использований (для контроля лимитов).
+    example: 87
+  createdAt:
+    type: string
+    format: date-time
+    description: Время создания.
+    example: '2026-07-05T08:00:00Z'
+  updatedAt:
+    type: string
+    format: date-time
+    description: Время последнего обновления.
+    example: '2026-08-04T10:40:00Z'

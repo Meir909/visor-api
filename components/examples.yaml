@@ -1381,3 +1381,178 @@ ClubAnalyticsOverviewExample:
     meta:
       requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
       timestamp: '2026-08-04T10:50:00Z'
+
+DiscountListExample:
+  summary: Список промо клуба
+  value:
+    data:
+      - id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        code: WELCOME10
+        name: Приветственный 10%
+        description: Скидка на первую бронь для новых игроков
+        discountType: PERCENTAGE
+        amountMinor: null
+        percentageBasisPoints: 1000
+        currency: KZT
+        validFrom: '2026-08-05T00:00:00Z'
+        validUntil: '2026-09-05T00:00:00Z'
+        totalRedemptionLimit: 500
+        perUserRedemptionLimit: 1
+        minimumAmountMinor: '600000'
+        maximumDiscountMinor: '150000'
+        isActive: true
+        status: ACTIVE
+        usedRedemptions: 87
+        createdAt: '2026-07-05T08:00:00Z'
+        updatedAt: '2026-08-04T10:40:00Z'
+      - id: 7b8c9d0e-1e2f-4a3b-9c4d-5e6f7a8b9c0d
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        code: null
+        name: Фикс 5000 тенге
+        description: Промо от администратора по внутреннему применению
+        discountType: FIXED_AMOUNT
+        amountMinor: '500000'
+        percentageBasisPoints: null
+        currency: KZT
+        validFrom: '2026-08-01T00:00:00Z'
+        validUntil: '2026-08-31T00:00:00Z'
+        totalRedemptionLimit: null
+        perUserRedemptionLimit: 1
+        minimumAmountMinor: '600000'
+        maximumDiscountMinor: null
+        isActive: true
+        status: ACTIVE
+        usedRedemptions: 23
+        createdAt: '2026-07-28T09:00:00Z'
+        updatedAt: '2026-08-01T12:00:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+DiscountDetailExample:
+  summary: Детали промо
+  value:
+    data:
+      id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+      code: WELCOME10
+      name: Приветственный 10%
+      description: Скидка на первую бронь для новых игроков
+      discountType: PERCENTAGE
+      amountMinor: null
+      percentageBasisPoints: 1000
+      currency: KZT
+      validFrom: '2026-08-05T00:00:00Z'
+      validUntil: '2026-09-05T00:00:00Z'
+      totalRedemptionLimit: 500
+      perUserRedemptionLimit: 1
+      minimumAmountMinor: '600000'
+      maximumDiscountMinor: '150000'
+      isActive: true
+      status: ACTIVE
+      usedRedemptions: 87
+      createdAt: '2026-07-05T08:00:00Z'
+      updatedAt: '2026-08-04T10:55:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:55:00Z'
+
+DiscountCreateExample:
+  summary: Тело создания промо
+  value:
+    code: WELCOME10
+    name: Приветственный 10%
+    description: Скидка на первую бронь для новых игроков
+    discountType: PERCENTAGE
+    percentageBasisPoints: 1000
+    currency: KZT
+    validFrom: '2026-08-05T00:00:00Z'
+    validUntil: '2026-09-05T00:00:00Z'
+    totalRedemptionLimit: 500
+    perUserRedemptionLimit: 1
+    minimumAmountMinor: '600000'
+    maximumDiscountMinor: '150000'
+
+RedemptionsExample:
+  summary: Использования промо
+  value:
+    data:
+      - id: 9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        discountId: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+        discountName: Приветственный 10%
+        discountCode: WELCOME10
+        reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+        reservationNumber: VR-20260804-00042
+        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        amountMinor: '60000'
+        currency: KZT
+        status: APPLIED
+        releasedAt: null
+        createdAt: '2026-08-04T10:12:30Z'
+        updatedAt: '2026-08-04T10:12:30Z'
+      - id: bb2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        discountId: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+        discountName: Приветственный 10%
+        discountCode: WELCOME10
+        reservationId: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3d
+        reservationNumber: VR-20260804-00045
+        userId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1e
+        amountMinor: '75000'
+        currency: KZT
+        status: APPLIED
+        releasedAt: null
+        createdAt: '2026-08-04T10:40:00Z'
+        updatedAt: '2026-08-04T10:40:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+WalkInReservationRequestExample:
+  summary: Тело walk-in брони (гость без аккаунта)
+  value:
+    clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+    resourceIds:
+      - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+    startAt: '2026-08-04T15:00:00Z'
+    endAt: '2026-08-04T17:00:00Z'
+    participantCount: 2
+    guestName: Александр Петров
+    guestPhone: '+77001234567'
+    guestEmail: alex@example.com
+    discountCode: WELCOME10
+    notes: Гостю нужен VR-набор
+
+WalkInReservationResponseExample:
+  summary: Созданная guest-бронь
+  value:
+    data:
+      id: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+      playerUserId: null
+      reservationNumber: VR-20260804-00052
+      status: PENDING
+      startAt: '2026-08-04T15:00:00Z'
+      endAt: '2026-08-04T17:00:00Z'
+      price:
+        subtotalMinor: '600000'
+        discountMinor: '60000'
+        totalMinor: '540000'
+        depositMinor: '108000'
+        currency: KZT
+      version: 1
+      createdAt: '2026-08-04T10:58:00Z'
+      updatedAt: '2026-08-04T10:58:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:58:00Z'

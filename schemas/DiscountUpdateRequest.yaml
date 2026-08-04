@@ -1,0 +1,58 @@
+type: object
+description: Обновление промо/скидки. Поля перезаписываются только при передаче.
+properties:
+  code:
+    type: [string, 'null']
+    maxLength: 64
+    description: Код купона. `null` удаляет код (промо применяется только вручную).
+    example: WELCOME10
+  name:
+    type: string
+    maxLength: 160
+    example: Приветственный 10%
+  description:
+    type: [string, 'null']
+    example: Скидка на первую бронь для новых игроков
+  discountType:
+    $ref: './DiscountType.yaml'
+  amountMinor:
+    type: [string, 'null']
+    pattern: '^\d+$'
+    description: Фиксированная скидка в minor units.
+    example: '100000'
+  percentageBasisPoints:
+    type: [integer, 'null']
+    minimum: 1
+    maximum: 10000
+    description: Скидка в базисных пунктах (100 = 1%).
+    example: 1000
+  currency:
+    type: [string, 'null']
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT
+  validFrom:
+    type: string
+    format: date-time
+    example: '2026-08-05T00:00:00Z'
+  validUntil:
+    type: string
+    format: date-time
+    example: '2026-09-05T00:00:00Z'
+  totalRedemptionLimit:
+    type: [integer, 'null']
+    minimum: 1
+    example: 500
+  perUserRedemptionLimit:
+    type: [integer, 'null']
+    minimum: 1
+    example: 1
+  minimumAmountMinor:
+    type: [string, 'null']
+    pattern: '^\d+$'
+    example: '600000'
+  maximumDiscountMinor:
+    type: [string, 'null']
+    pattern: '^\d+$'
+    example: '150000'

@@ -1,0 +1,65 @@
+type: object
+description: Создание брони администратором от имени гостя без личного аккаунта (walk-in).
+required:
+  - clubId
+  - resourceIds
+  - startAt
+  - endAt
+  - guestName
+properties:
+  clubId:
+    type: string
+    format: uuid
+    description: Клуб, в котором создаётся бронь.
+    example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+  resourceIds:
+    type: array
+    minItems: 1
+    maxItems: 10
+    uniqueItems: true
+    description: Ресурсы брони (один VIP room либо компьютеры).
+    items:
+      type: string
+      format: uuid
+    example:
+      - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  startAt:
+    type: string
+    format: date-time
+    description: Начало брони (ISO 8601 UTC).
+    example: '2026-08-04T15:00:00Z'
+  endAt:
+    type: string
+    format: date-time
+    description: Окончание брони (строго позже `startAt`).
+    example: '2026-08-04T17:00:00Z'
+  participantCount:
+    type: integer
+    minimum: 1
+    description: Количество участников (не более суммарной вместимости ресурсов).
+    example: 2
+  guestName:
+    type: string
+    maxLength: 160
+    description: Имя гостя.
+    example: Александр Петров
+  guestPhone:
+    type: string
+    maxLength: 32
+    description: Телефон гостя (опционально, для SMS-уведомлений).
+    example: '+77001234567'
+  guestEmail:
+    type: string
+    format: email
+    description: Email гостя (опционально).
+    example: alex@example.com
+  discountCode:
+    type: string
+    maxLength: 64
+    description: Код купона для применения.
+    example: WELCOME10
+  notes:
+    type: string
+    maxLength: 1000
+    description: Комментарий администратора или пожелания гостя.
+    example: Гостю нужен VR-набор

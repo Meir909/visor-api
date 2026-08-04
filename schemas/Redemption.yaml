@@ -1,0 +1,75 @@
+type: object
+description: Запись об использовании скидки бронированием (атомарная, с контролем лимитов).
+required:
+  - id
+  - organizationId
+  - discountId
+  - reservationId
+  - userId
+  - amountMinor
+  - currency
+  - status
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор использования.
+    example: 9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d
+  organizationId:
+    type: string
+    format: uuid
+    example: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+  discountId:
+    type: string
+    format: uuid
+    description: Промо, применённое к резерву.
+    example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+  discountName:
+    type: string
+    description: Название промо (для списков).
+    example: Приветственный 10%
+  discountCode:
+    type: [string, 'null']
+    description: Код купона, если применялся по коду.
+    example: WELCOME10
+  reservationId:
+    type: string
+    format: uuid
+    description: Бронирование, к которому применена скидка.
+    example: 2cd0f5a8-3e2f-4f8a-9b1c-8d7e6f5a4b3c
+  reservationNumber:
+    type: string
+    description: Человекочитаемый номер бронирования.
+    example: VR-20260804-00042
+  userId:
+    type: string
+    format: uuid
+    description: Пользователь, получивший скидку.
+    example: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+  amountMinor:
+    type: string
+    pattern: '^-\d+$|^\d+$'
+    description: Фактическая сумма скидки в minor units.
+    example: '60000'
+  currency:
+    type: string
+    minLength: 3
+    maxLength: 3
+    example: KZT
+  status:
+    $ref: './RedemptionStatus.yaml'
+  releasedAt:
+    type: [string, 'null']
+    format: date-time
+    description: Время освобождения после отмены (для `RELEASED`).
+    example: null
+  createdAt:
+    type: string
+    format: date-time
+    example: '2026-08-04T10:12:30Z'
+  updatedAt:
+    type: string
+    format: date-time
+    example: '2026-08-04T10:12:30Z'

@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны) и **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы). Остальные модули (Pricing, Notifications, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды Owner/Admin: выручка, загрузка, конверсия, популярные ресурсы, пиковые часы) и **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони). Остальные модули (Pricing, Notifications, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -740,7 +740,60 @@ tags:
 
       **Ошибки:** `422 ANALYTICS_RANGE_TOO_LARGE` (период больше ретенции/лимита точек), `422 INVALID_GRANULARITY`, `503 ANALYTICS_NOT_READY` (проектор ещё не догнал watermark).
 
+  - name: admin
+    description: |-
+      # Сотрудник клуба (Admin facade)
+
+      Сценарии сотрудника, которых нет в предметных модулях: **walk-in бронь** от имени клуба для гостя без аккаунта и просмотр **использованных купонов**.
+
+      **Ключевое правило:** Admin не дублирует доменные правила Reservations/Clubs/Pricing — он вызывает их публичные use cases. Часть операций сотрудника живёт в профильных модулях: очередь/check-in/no-show/move/extension — в `reservations`, расписание — в `clubs`, maintenance — в `computers`.
+
+      ## Walk-in
+
+      ```mermaid
+      flowchart LR
+          A[Admin] --> W[POST /admin/reservations/walk-in]
+          W --> V[Reservations правила: горизонт, длительность, пересечения]
+          W --> D[Скидка по коду, если указана]
+          W --> R[Создаётся полноценная бронь source=ADMIN]
+      ```
+
+  - name: admin-promotions
+    description: |-
+      # Промо и скидки (Admin / Pricing)
+
+      Управление промо клуба: купоны, процентные/фиксированные скидки, лимиты, включение/выключение и мягкое удаление.
+
+      **Разрешения:** `pricing.promotion` — CLUB_ADMIN (свои клубы) и ORG_OWNER.
+
+      ## Жизненный цикл промо
+
+      ```mermaid
+      flowchart TD
+          C[POST .../discounts] --> A[ACTIVE/SCHEDULED]
+          A --> D[POST .../activate]
+          A --> O[POST .../deactivate → INACTIVE]
+          A --> DEL[DELETE → мягкое удаление]
+          A --> E[срок истёк → EXPIRED]
+      ```
+
+      **Ошибки:** `DISCOUNT_CODE_TAKEN`, `DISCOUNT_TYPE_CONFLICT`, `DISCOUNT_INVALID_PERIOD`, `DISCOUNT_EXPIRED`, `DISCOUNT_LIMIT_REACHED`.
+
 paths:
+  '/organizations/{organizationId}/clubs/{clubId}/discounts':
+    $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1discounts'
+  '/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}':
+    $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1discounts~1{discountId}'
+  '/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/activate':
+    $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1discounts~1{discountId}~1activate'
+  '/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/deactivate':
+    $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1discounts~1{discountId}~1deactivate'
+  '/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/redemptions':
+    $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1discounts~1{discountId}~1redemptions'
+  '/organizations/{organizationId}/clubs/{clubId}/redemptions':
+    $ref: './paths/admin.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1redemptions'
+  '/admin/reservations/walk-in':
+    $ref: './paths/admin.yaml#/~1admin~1reservations~1walk-in'
   '/organizations/{organizationId}/analytics/overview':
     $ref: './paths/analytics.yaml#/~1organizations~1{organizationId}~1analytics~1overview'
   '/organizations/{organizationId}/analytics/revenue':
@@ -1167,6 +1220,24 @@ components:
       $ref: './schemas/PeakHours.yaml'
     AnalyticsOverview:
       $ref: './schemas/AnalyticsOverview.yaml'
+    DiscountType:
+      $ref: './schemas/DiscountType.yaml'
+    DiscountStatus:
+      $ref: './schemas/DiscountStatus.yaml'
+    Discount:
+      $ref: './schemas/Discount.yaml'
+    DiscountCreateRequest:
+      $ref: './schemas/DiscountCreateRequest.yaml'
+    DiscountUpdateRequest:
+      $ref: './schemas/DiscountUpdateRequest.yaml'
+    DiscountActionRequest:
+      $ref: './schemas/DiscountActionRequest.yaml'
+    RedemptionStatus:
+      $ref: './schemas/RedemptionStatus.yaml'
+    Redemption:
+      $ref: './schemas/Redemption.yaml'
+    WalkInReservationRequest:
+      $ref: './schemas/WalkInReservationRequest.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1266,6 +1337,14 @@ components:
       $ref: './components/parameters.yaml#/Granularity'
     AnalyticsLimit:
       $ref: './components/parameters.yaml#/AnalyticsLimit'
+    DiscountId:
+      $ref: './components/parameters.yaml#/DiscountId'
+    DiscountTypeQuery:
+      $ref: './components/parameters.yaml#/DiscountTypeQuery'
+    DiscountStatusQuery:
+      $ref: './components/parameters.yaml#/DiscountStatusQuery'
+    RedemptionStatusQuery:
+      $ref: './components/parameters.yaml#/RedemptionStatusQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -1382,3 +1461,15 @@ components:
       $ref: './components/examples.yaml#/PeakHoursExample'
     ClubAnalyticsOverviewExample:
       $ref: './components/examples.yaml#/ClubAnalyticsOverviewExample'
+    DiscountListExample:
+      $ref: './components/examples.yaml#/DiscountListExample'
+    DiscountDetailExample:
+      $ref: './components/examples.yaml#/DiscountDetailExample'
+    DiscountCreateExample:
+      $ref: './components/examples.yaml#/DiscountCreateExample'
+    RedemptionsExample:
+      $ref: './components/examples.yaml#/RedemptionsExample'
+    WalkInReservationExample:
+      $ref: './components/examples.yaml#/WalkInReservationRequestExample'
+    WalkInReservationResponseExample:
+      $ref: './components/examples.yaml#/WalkInReservationResponseExample'

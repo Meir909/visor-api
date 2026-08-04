@@ -513,3 +513,40 @@ AnalyticsLimit:
     maximum: 50
     default: 10
   example: 10
+
+DiscountId:
+  name: discountId
+  in: path
+  required: true
+  description: Идентификатор промо/скидки (UUID).
+  schema:
+    type: string
+    format: uuid
+  example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+
+DiscountTypeQuery:
+  name: type
+  in: query
+  required: false
+  description: Фильтр промо по типу скидки.
+  schema:
+    $ref: '../schemas/DiscountType.yaml'
+  example: PERCENTAGE
+
+DiscountStatusQuery:
+  name: status
+  in: query
+  required: false
+  description: Фильтр промо по вычисляемому статусу.
+  schema:
+    $ref: '../schemas/DiscountStatus.yaml'
+  example: ACTIVE
+
+RedemptionStatusQuery:
+  name: status
+  in: query
+  required: false
+  description: Фильтр использований скидки по статусу.
+  schema:
+    $ref: '../schemas/RedemptionStatus.yaml'
+  example: APPLIED

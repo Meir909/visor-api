@@ -1,0 +1,453 @@
+# =====================================================================
+# Visora API — Paths модуля Admin (сотрудник клуба: промо, купоны, walk-in)
+# =====================================================================
+
+'/organizations/{organizationId}/clubs/{clubId}/discounts':
+  get:
+    tags:
+      - admin-promotions
+    summary: Список промо/скидок клуба
+    operationId: listDiscounts
+    description: |-
+      Промо и скидки клуба, включая неактивные и просроченные. Фильтры по типу и статусу.
+
+      **Правила:**
+      - Разрешение `pricing.promotion`; CLUB_ADMIN — только свои клубы.
+      - `status` — вычисляемый (ACTIVE/SCHEDULED/EXPIRED/INACTIVE) от `isActive` и периода.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountTypeQuery'
+      - $ref: '../components/parameters.yaml#/DiscountStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Промо клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Discount.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              discounts:
+                $ref: '../components/examples.yaml#/DiscountListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+  post:
+    tags:
+      - admin-promotions
+    summary: Создать промо/скидку
+    operationId: createDiscount
+    description: |-
+      Создание промо клуба. Код купона уникален в клубе; пустой `code` означает промо, применяемое вручную.
+
+      **Бизнес-правила:**
+      - `FIXED_AMOUNT` требует `amountMinor` + `currency`; `PERCENTAGE` — `percentageBasisPoints`.
+      - `validUntil` строго позже `validFrom`.
+      - Лимиты и минимальная сумма — nullable; превышение периода → `422`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/DiscountCreateRequest.yaml'
+          examples:
+            create:
+              $ref: '../components/examples.yaml#/DiscountCreateExample'
+    responses:
+      '201':
+        description: Промо создано.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Discount.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/DiscountDetailExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}':
+  get:
+    tags:
+      - admin-promotions
+    summary: Детали промо/скидки
+    operationId: getDiscount
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Промо.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Discount.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              discount:
+                $ref: '../components/examples.yaml#/DiscountDetailExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+  patch:
+    tags:
+      - admin-promotions
+    summary: Обновить промо/скидку
+    operationId: updateDiscount
+    description: |-
+      Обновление полей промо. Передаваемые поля перезаписываются.
+
+      **Правила:** смена `discountType` требует согласованной замены `amountMinor`/`percentageBasisPoints`; применяется полиска консистентности → иначе `422 DISCOUNT_TYPE_CONFLICT`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/DiscountUpdateRequest.yaml'
+    responses:
+      '200':
+        description: Промо обновлено.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Discount.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              updated:
+                $ref: '../components/examples.yaml#/DiscountDetailExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+  delete:
+    tags:
+      - admin-promotions
+    summary: Удалить промо/скидку
+    operationId: deleteDiscount
+    description: |-
+      Мягкое удаление промо (`deleted_at`). Исторические redemptions сохраняются, купон больше не применим.
+
+      **Правила:** удаление не затрагивает уже применённые скидки.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Промо удалено.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/activate':
+  post:
+    tags:
+      - admin-promotions
+    summary: Активировать промо
+    operationId: activateDiscount
+    description: |-
+      Включить промо вручную (`isActive: true`). Промо остаётся в пределах своего периода действия.
+
+      **Правила:** если период истёк → `422 DISCOUNT_EXPIRED`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/DiscountActionRequest.yaml'
+    responses:
+      '200':
+        description: Промо активировано.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Discount.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/deactivate':
+  post:
+    tags:
+      - admin-promotions
+    summary: Деактивировать промо
+    operationId: deactivateDiscount
+    description: Вручную выключить промо, `isActive` становится `false`. Не влияет на уже применённые скидки.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/DiscountActionRequest.yaml'
+    responses:
+      '200':
+        description: Промо деактивировано.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Discount.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/discounts/{discountId}/redemptions':
+  get:
+    tags:
+      - admin
+    summary: Использования конкретного промо
+    operationId: listDiscountRedemptions
+    description: |-
+      Записи об использовании промо (redemptions) с фильтром по статусу. Показывает, кто и когда применял скидку.
+
+      **Разрешение:** `pricing.promotion`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/DiscountId'
+      - $ref: '../components/parameters.yaml#/RedemptionStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Использования промо.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Redemption.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              redemptions:
+                $ref: '../components/examples.yaml#/RedemptionsExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/redemptions':
+  get:
+    tags:
+      - admin
+    summary: Все использованные купоны клуба
+    operationId: listClubRedemptions
+    description: |-
+      Все redemptions клуба за период (пересечение всех промо), для отчётности и контроля лимитов.
+
+      **Разрешение:** `pricing.promotion`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/From'
+      - $ref: '../components/parameters.yaml#/To'
+      - $ref: '../components/parameters.yaml#/RedemptionStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Использования купонов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Redemption.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              redemptions:
+                $ref: '../components/examples.yaml#/RedemptionsExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/admin/reservations/walk-in':
+  post:
+    tags:
+      - admin
+    summary: Создать guest-бронь (walk-in)
+    operationId: createWalkInReservation
+    description: |-
+      Бронь от имени клуба для гостя без личного аккаунта. Игрок получает номер брони без входа в систему.
+
+      **Правила:**
+      - Разрешения: `reservation.check_in.club`/`admin` в скоупе клуба.
+      - Повторяет валидацию Reservations: горизонт 24 ч, длительность ≤ 10 ч, без пересечений, ресурсы клуба.
+      - `source` = `ADMIN`. Результат — полноценная бронь (создаётся по тем же правилам, что и игроком).
+    parameters:
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/WalkInReservationRequest.yaml'
+          examples:
+            walkIn:
+              $ref: '../components/examples.yaml#/WalkInReservationRequestExample'
+    responses:
+      '201':
+        description: Guest-бронь создана.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Reservation.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/WalkInReservationResponseExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'

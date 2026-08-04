@@ -32,9 +32,9 @@ properties:
     description: Название клуба (denormalized для отображения).
     example: Cyber Arena
   playerUserId:
-    type: string
+    type: [string, 'null']
     format: uuid
-    description: Основной игрок / владелец брони.
+    description: Основной игрок / владелец брони. `null` для guest-брони (walk-in), созданной клубом без аккаунта игрока.
   reservationNumber:
     type: string
     maxLength: 32

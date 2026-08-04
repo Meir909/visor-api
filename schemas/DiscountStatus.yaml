@@ -1,0 +1,7 @@
+type: string
+description: Вычисляемый операционный статус промо. Производный от `isActive` и периода `validFrom`/`validUntil`.
+enum:
+  - SCHEDULED
+  - ACTIVE
+  - EXPIRED
+  - INACTIVE

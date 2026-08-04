@@ -1,0 +1,5 @@
+type: string
+description: Тип скидочного механизма промо.
+enum:
+  - PERCENTAGE
+  - FIXED_AMOUNT

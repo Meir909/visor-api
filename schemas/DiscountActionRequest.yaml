@@ -1,0 +1,8 @@
+type: object
+description: Действие с промо (активация/деактивация) с опциональной причиной.
+properties:
+  reason:
+    type: string
+    maxLength: 500
+    description: Причина изменения операционного состояния (для аудита).
+    example: Запуск летней акции
