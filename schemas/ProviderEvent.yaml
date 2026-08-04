@@ -1,0 +1,74 @@
+type: object
+description: |
+  Запись bounded inbox событий Provider (`provider_events`). Служит для идемпотентной приёмки и диагностики; не является постоянным хранилищем аналитики. Payload хранится санитизированным и ограниченным по размеру.
+required:
+  - id
+  - organizationId
+  - clubId
+  - connectionId
+  - eventType
+  - status
+  - receivedAt
+  - attemptCount
+  - correlationId
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор события (receipt id).
+  organizationId:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  connectionId:
+    type: string
+    format: uuid
+  externalEventId:
+    type:
+      - string
+      - 'null'
+    description: 'Идентификатор события на стороне Provider (опционально, используется для дедупликации).'
+  eventType:
+    $ref: '../schemas/ProviderEventType.yaml'
+  status:
+    $ref: '../schemas/ProviderEventStatus.yaml'
+  eventOccurredAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Время события по данным Provider (опционально).
+  receivedAt:
+    type: string
+    format: date-time
+    description: Время приёмки Visora.
+  attemptCount:
+    type: integer
+    format: int32
+    minimum: 0
+    description: Количество попыток обработки.
+  lastErrorCode:
+    type:
+      - string
+      - 'null'
+    description: 'Санитизированный код ошибки последней попытки (опционально).'
+  correlationId:
+    type: string
+    format: uuid
+  payloadHash:
+    type:
+      - string
+      - 'null'
+    description: 'Хэш payload для дедупликации и проверки целостности.'
+  expiresAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: 'Срок хранения записи (retention, обычно 30 дней).'
+  createdAt:
+    type: string
+    format: date-time

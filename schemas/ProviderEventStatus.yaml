@@ -1,0 +1,13 @@
+type: string
+description: |
+  Статус обработки inbound-события Provider в bounded inbox (`provider_events`).
+enum:
+  - RECEIVED
+  - PROCESSED
+  - IGNORED
+  - FAILED
+x-enum-descriptions:
+  RECEIVED: Событие получено и ожидает обработки.
+  PROCESSED: Событие успешно обработано и закоммичено.
+  IGNORED: Событие распознано как не требующее реакции.
+  FAILED: Обработка завершилась ошибкой; попытки ограничены политикой.

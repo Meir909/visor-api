@@ -1,0 +1,30 @@
+type: string
+description: |
+  Тип события Provider (canonical). Адаптер мапит native payload в canonical event независимо от транспорта (webhook/stream/polling).
+enum:
+  - RESOURCE_STATE_CHANGED
+  - SESSION_STARTED
+  - SESSION_EXTENDED
+  - SESSION_ENDED
+  - RESOURCE_LOCKED
+  - RESOURCE_UNLOCKED
+  - RESOURCE_ONLINE
+  - RESOURCE_OFFLINE
+  - RESOURCE_MAINTENANCE
+  - HEALTH_CHANGED
+  - PAYMENT_STATUS_CHANGED
+  - UNKNOWN
+x-enum-descriptions:
+  RESOURCE_STATE_CHANGED: |-
+    Обобщённое изменение состояния ресурса (state подаётся отдельным полем).
+  SESSION_STARTED: Сессия стартовала на ресурсе по данным Provider.
+  SESSION_EXTENDED: Сессия продлена.
+  SESSION_ENDED: Сессия завершена.
+  RESOURCE_LOCKED: Ресурс заблокирован/удерживается.
+  RESOURCE_UNLOCKED: Блокировка ресурса снята.
+  RESOURCE_ONLINE: Ресурс стал доступен.
+  RESOURCE_OFFLINE: Ресурс выключен/недоступен.
+  RESOURCE_MAINTENANCE: Ресурс переведён в технический режим.
+  HEALTH_CHANGED: Изменился статус доступности подключения/сервиса Provider.
+  PAYMENT_STATUS_CHANGED: Обновился статус оплаты на стороне Provider.
+  UNKNOWN: Неопознанное событие — payload сохраняется для диагностики.

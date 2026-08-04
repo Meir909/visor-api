@@ -1,0 +1,30 @@
+type: object
+description: |
+  Подтверждение приёмки inbound-события Provider. Дубликат (по `externalEventId`) возвращает `status = DUPLICATE` без повторной обработки.
+required:
+  - receiptId
+  - externalEventId
+  - status
+  - requestId
+  - timestamp
+properties:
+  receiptId:
+    type: string
+    format: uuid
+    description: Идентификатор приёмочной записи (`provider_events.id`).
+  externalEventId:
+    type: string
+    description: Идентификатор события Provider, для которого выдана квитанция.
+  status:
+    type: string
+    enum:
+      - RECEIVED
+      - DUPLICATE
+    description: RECEIVED — новое событие принято; DUPLICATE — событие уже было обработано ранее.
+  requestId:
+    type: string
+    description: Идентификатор запроса (для трассировки).
+  timestamp:
+    type: string
+    format: date-time
+    description: Время приёмки.

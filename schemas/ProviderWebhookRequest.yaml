@@ -1,0 +1,60 @@
+type: object
+description: |
+  Входящий конверт события, который внешний Provider отправляет в Visora через inbound webhook. Содержит canonical-поля; raw payload передаётся отдельно и сохраняется санитизированным.
+required:
+  - externalEventId
+  - eventType
+  - eventOccurredAt
+  - resource
+properties:
+  externalEventId:
+    type: string
+    description: 'Уникальный идентификатор события Provider (используется для дедупликации).'
+  eventType:
+    $ref: '../schemas/ProviderEventType.yaml'
+  eventOccurredAt:
+    type: string
+    format: date-time
+    description: Время события на стороне Provider.
+  resource:
+    type: object
+    description: Ссылка на ресурс, к которому относится событие.
+    required:
+      - externalResourceId
+    properties:
+      externalResourceId:
+        type: string
+        description: Идентификатор ресурса в системе Provider.
+      externalDisplayName:
+        type:
+          - string
+          - 'null'
+        description: 'Диагностическое имя ресурса (опционально).'
+      state:
+        $ref: '../schemas/ProviderResourceState.yaml'
+      activeSession:
+        type:
+          - object
+          - 'null'
+        description: 'Активная сессия, если событие относится к сессии.'
+        properties:
+          externalSessionId:
+            type: string
+          startedAt:
+            type: string
+            format: date-time
+          expectedEndAt:
+            type:
+              - string
+              - 'null'
+            format: date-time
+      extra:
+        type:
+          - object
+          - 'null'
+        description: 'Прочие canonical-поля события (bounded, не raw payload).'
+  payload:
+    type:
+      - object
+      - 'null'
+    description: 'Санитизированный ограниченный payload события для диагностики. Секреты и PII не принимаются.'

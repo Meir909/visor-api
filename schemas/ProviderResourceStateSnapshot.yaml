@@ -1,0 +1,60 @@
+type: object
+description: |
+  Каноническая проекция состояния привязанного ресурса по данным Provider (StateReader.listResourceStates). Используется для диагностики; состояние оценивается только вместе с `freshness`.
+required:
+  - bindingId
+  - resourceId
+  - externalResourceId
+  - state
+  - freshness
+  - observedAt
+  - bindingStatus
+properties:
+  bindingId:
+    type: string
+    format: uuid
+    description: Идентификатор привязки (`provider_resource_bindings.id`).
+  resourceId:
+    type: string
+    format: uuid
+    description: Canonical идентификатор ресурса Visora.
+  externalResourceId:
+    type: string
+    description: Идентификатор ресурса в Provider.
+  externalDisplayName:
+    type:
+      - string
+      - 'null'
+    description: 'Диагностическое имя.'
+  state:
+    $ref: '../schemas/ProviderResourceState.yaml'
+  freshness:
+    $ref: '../schemas/ProviderStateFreshness.yaml'
+  staleSeconds:
+    type:
+      - integer
+      - 'null'
+    format: int32
+    description: 'Сколько секунд проекция устарела (только при STALE).'
+  observedAt:
+    type: string
+    format: date-time
+    description: Время последнего наблюдения состояния.
+  bindingStatus:
+    $ref: '../schemas/BindingStatus.yaml'
+  activeSession:
+    type:
+      - object
+      - 'null'
+    description: 'Активная сессия по данным Provider, если есть.'
+    properties:
+      externalSessionId:
+        type: string
+      startedAt:
+        type: string
+        format: date-time
+      expectedEndAt:
+        type:
+          - string
+          - 'null'
+        format: date-time

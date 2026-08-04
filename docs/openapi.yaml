@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей). Остальные модули (Pricing, Notifications, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов). Остальные модули (Pricing, Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -813,7 +813,231 @@ tags:
       - Поиск пользователей платформы.
 
       **Ошибки:** `PLATFORM_ROLE_FORBIDDEN`, `PLATFORM_ROLE_ALREADY_ASSIGNED`, `PLATFORM_ROLE_NOT_FOUND`, `AUDIT_ENTRY_NOT_FOUND`.
+  - name: provider
+    description: |-
+      # Provider (интеграция с внешними системами)
+
+      Inbound-контур интеграции с внешними Provider (Gizmo и будущие адаптеры). Конфигурация подключений и привязка ресурсов — в модуле Computers; здесь — приёмка событий Provider, inbox `provider_events`, снапшоты состояний ресурсов.
+
+      ## Inbound события Provider
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant G as Gizmo / Provider
+          participant W as POST /webhooks/provider/{connectionId}/events
+          participant E as provider_events (inbox)
+          participant D as Domain (состояния и сессии)
+          G->>W: signature + canonical event
+          W->>W: проверить подпись, дедупликация
+          W->>E: записать (RECEIVED)
+          E->>D: обработать → PROCESSED / IGNORED / FAILED
+          W-->>G: 202 ack (RECEIVED / DUPLICATE)
+      ```
+
+      **Правила:**
+      - Идемпотентность по `externalEventId`/payload-хэшу; дубликат → `DUPLICATE`.
+      - Подпись `X-Provider-Signature`, а не Bearer.
+      - Raw payload не хранится в бизнес-таблицах; inbox санитизирован и ограничен retention (~30 дней).
+      - `UNKNOWN`/`STALE` состояние никогда не трактуется как `AVAILABLE` (спека 8.8).
+      - Команды session/lock не считаются успешными без подтверждения.
+
+      **Ошибки:** `PROVIDER_SIGNATURE_INVALID`, `INVALID_PROVIDER_EVENT`, `PROVIDER_EVENT_NOT_FOUND`, `PROVIDER_CONNECTION_NOT_ACTIVE`, `PROVIDER_STATE_STALE`.
 paths:
+  /webhooks/provider/{connectionId}/events:
+    post:
+      tags:
+        - provider
+      summary: Inbound webhook событий Provider (Gizmo и др.)
+      operationId: ingestProviderEvent
+      description: |-
+        Единая endpoint для приёмки событий Provider. Внешние системы шлют сюда canonical события (состояние ресурса, сессии, блокировки). Аутентификация — подпись `X-Provider-Signature`, а не пользовательский Bearer.
+
+        **Правила:**
+        - Дубликат по `externalEventId` возвращает `202` со `status = DUPLICATE` без повторной обработки.
+        - Секреты и PII в `payload` не принимаются (санитизация и ограничение размера).
+        - Если подключение не в `ACTIVE`/`DEGRADED` — событие отклоняется.
+        - Команды session/lock не считаются успешными без подтверждения (спекa 8.8).
+      parameters:
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/ProviderSignature'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderWebhookRequest'
+            examples:
+              event:
+                $ref: '#/components/examples/ProviderWebhookRequestExample'
+      responses:
+        '202':
+          description: Событие принято (или распознано как дубликат).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderWebhookAck'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                ack:
+                  $ref: '#/components/examples/ProviderWebhookAckExample'
+        '400':
+          description: Некорректный конверт события (`INVALID_PROVIDER_EVENT`).
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Невалидная подпись (`PROVIDER_SIGNATURE_INVALID`).
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Подключение Provider не найдено.
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Подключение не активно (`PROVIDER_CONNECTION_NOT_ACTIVE`).
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: Provider в degraded-режиме или интеграция недоступна (`PROVIDER_STATE_STALE`).
+          $ref: '#/components/responses/ServiceUnavailable'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/events:
+    get:
+      tags:
+        - provider
+      summary: Inbox событий Provider (диагностика)
+      operationId: listProviderEvents
+      description: |
+        Поиск по bounded inbox `provider_events`. Support-только: фильтры по статусу, типу и времени приёмки. Не для аналитики (аналитика — в модуле Analytics).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/ProviderEventStatusQuery'
+        - $ref: '#/components/parameters/ProviderEventTypeQuery'
+        - $ref: '#/components/parameters/ProviderEventReceivedFrom'
+        - $ref: '#/components/parameters/ProviderEventReceivedTo'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список событий.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderEvent'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                events:
+                  $ref: '#/components/examples/ProviderEventListExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/events/{eventId}:
+    get:
+      tags:
+        - provider
+      summary: Событие Provider по id
+      operationId: getProviderEvent
+      description: |
+        Детали записи `provider_events` (attemptCount, статус, санитизированный error code, correlation). Support-только.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/ProviderEventId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Событие.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProviderEvent'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/resources/state:
+    get:
+      tags:
+        - provider
+      summary: Состояние привязанных ресурсов (снапшот Provider)
+      operationId: listProviderResourceStates
+      description: |
+        Canonical снапшот состояний всех привязанных к подключению ресурсов с признаком свежести (StateReader). Диагностика расхождений управляемой модели и Provider.
+
+        **Правило:** `STALE` (или `UNKNOWN`) состояние никогда не трактуется как `AVAILABLE`. При принятии броней нарушения учитываются политикой freshness (спека 8.8).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ProviderConnectionId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Снапшот состояний ресурсов.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderResourceStateSnapshot'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                states:
+                  $ref: '#/components/examples/ProviderResourceStateListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /platform-admin/roles:
     get:
       tags:
@@ -7782,6 +8006,11 @@ components:
         - PLATFORM_ROLE_ALREADY_ASSIGNED
         - PLATFORM_ROLE_NOT_FOUND
         - AUDIT_ENTRY_NOT_FOUND
+        - PROVIDER_SIGNATURE_INVALID
+        - INVALID_PROVIDER_EVENT
+        - PROVIDER_EVENT_NOT_FOUND
+        - PROVIDER_CONNECTION_NOT_ACTIVE
+        - PROVIDER_STATE_STALE
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -13080,6 +13309,288 @@ components:
           format: date-time
           description: Время действия.
           example: '2026-08-04T11:20:00Z'
+    ProviderEventType:
+      type: string
+      description: |
+        Тип события Provider (canonical). Адаптер мапит native payload в canonical event независимо от транспорта (webhook/stream/polling).
+      enum:
+        - RESOURCE_STATE_CHANGED
+        - SESSION_STARTED
+        - SESSION_EXTENDED
+        - SESSION_ENDED
+        - RESOURCE_LOCKED
+        - RESOURCE_UNLOCKED
+        - RESOURCE_ONLINE
+        - RESOURCE_OFFLINE
+        - RESOURCE_MAINTENANCE
+        - HEALTH_CHANGED
+        - PAYMENT_STATUS_CHANGED
+        - UNKNOWN
+      x-enum-descriptions:
+        RESOURCE_STATE_CHANGED: Обобщённое изменение состояния ресурса (state подаётся отдельным полем).
+        SESSION_STARTED: Сессия стартовала на ресурсе по данным Provider.
+        SESSION_EXTENDED: Сессия продлена.
+        SESSION_ENDED: Сессия завершена.
+        RESOURCE_LOCKED: Ресурс заблокирован/удерживается.
+        RESOURCE_UNLOCKED: Блокировка ресурса снята.
+        RESOURCE_ONLINE: Ресурс стал доступен.
+        RESOURCE_OFFLINE: Ресурс выключен/недоступен.
+        RESOURCE_MAINTENANCE: Ресурс переведён в технический режим.
+        HEALTH_CHANGED: Изменился статус доступности подключения/сервиса Provider.
+        PAYMENT_STATUS_CHANGED: Обновился статус оплаты на стороне Provider.
+        UNKNOWN: Неопознанное событие — payload сохраняется для диагностики.
+    ProviderEventStatus:
+      type: string
+      description: |
+        Статус обработки inbound-события Provider в bounded inbox (`provider_events`).
+      enum:
+        - RECEIVED
+        - PROCESSED
+        - IGNORED
+        - FAILED
+      x-enum-descriptions:
+        RECEIVED: Событие получено и ожидает обработки.
+        PROCESSED: Событие успешно обработано и закоммичено.
+        IGNORED: Событие распознано как не требующее реакции.
+        FAILED: Обработка завершилась ошибкой; попытки ограничены политикой.
+    ProviderEvent:
+      type: object
+      description: |
+        Запись bounded inbox событий Provider (`provider_events`). Служит для идемпотентной приёмки и диагностики; не является постоянным хранилищем аналитики. Payload хранится санитизированным и ограниченным по размеру.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - connectionId
+        - eventType
+        - status
+        - receivedAt
+        - attemptCount
+        - correlationId
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор события (receipt id).
+        organizationId:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        connectionId:
+          type: string
+          format: uuid
+        externalEventId:
+          type:
+            - string
+            - 'null'
+          description: Идентификатор события на стороне Provider (опционально, используется для дедупликации).
+        eventType:
+          $ref: '#/components/schemas/ProviderEventType'
+        status:
+          $ref: '#/components/schemas/ProviderEventStatus'
+        eventOccurredAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время события по данным Provider (опционально).
+        receivedAt:
+          type: string
+          format: date-time
+          description: Время приёмки Visora.
+        attemptCount:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Количество попыток обработки.
+        lastErrorCode:
+          type:
+            - string
+            - 'null'
+          description: Санитизированный код ошибки последней попытки (опционально).
+        correlationId:
+          type: string
+          format: uuid
+        payloadHash:
+          type:
+            - string
+            - 'null'
+          description: Хэш payload для дедупликации и проверки целостности.
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Срок хранения записи (retention, обычно 30 дней).
+        createdAt:
+          type: string
+          format: date-time
+    ProviderWebhookRequest:
+      type: object
+      description: |
+        Входящий конверт события, который внешний Provider отправляет в Visora через inbound webhook. Содержит canonical-поля; raw payload передаётся отдельно и сохраняется санитизированным.
+      required:
+        - externalEventId
+        - eventType
+        - eventOccurredAt
+        - resource
+      properties:
+        externalEventId:
+          type: string
+          description: Уникальный идентификатор события Provider (используется для дедупликации).
+        eventType:
+          $ref: '#/components/schemas/ProviderEventType'
+        eventOccurredAt:
+          type: string
+          format: date-time
+          description: Время события на стороне Provider.
+        resource:
+          type: object
+          description: Ссылка на ресурс, к которому относится событие.
+          required:
+            - externalResourceId
+          properties:
+            externalResourceId:
+              type: string
+              description: Идентификатор ресурса в системе Provider.
+            externalDisplayName:
+              type:
+                - string
+                - 'null'
+              description: Диагностическое имя ресурса (опционально).
+            state:
+              $ref: '#/components/schemas/ProviderResourceState'
+            activeSession:
+              type:
+                - object
+                - 'null'
+              description: Активная сессия, если событие относится к сессии.
+              properties:
+                externalSessionId:
+                  type: string
+                startedAt:
+                  type: string
+                  format: date-time
+                expectedEndAt:
+                  type:
+                    - string
+                    - 'null'
+                  format: date-time
+            extra:
+              type:
+                - object
+                - 'null'
+              description: Прочие canonical-поля события (bounded, не raw payload).
+        payload:
+          type:
+            - object
+            - 'null'
+          description: Санитизированный ограниченный payload события для диагностики. Секреты и PII не принимаются.
+    ProviderWebhookAck:
+      type: object
+      description: |
+        Подтверждение приёмки inbound-события Provider. Дубликат (по `externalEventId`) возвращает `status = DUPLICATE` без повторной обработки.
+      required:
+        - receiptId
+        - externalEventId
+        - status
+        - requestId
+        - timestamp
+      properties:
+        receiptId:
+          type: string
+          format: uuid
+          description: Идентификатор приёмочной записи (`provider_events.id`).
+        externalEventId:
+          type: string
+          description: Идентификатор события Provider, для которого выдана квитанция.
+        status:
+          type: string
+          enum:
+            - RECEIVED
+            - DUPLICATE
+          description: RECEIVED — новое событие принято; DUPLICATE — событие уже было обработано ранее.
+        requestId:
+          type: string
+          description: Идентификатор запроса (для трассировки).
+        timestamp:
+          type: string
+          format: date-time
+          description: Время приёмки.
+    ProviderStateFreshness:
+      type: string
+      description: |
+        Признак свежести проекции состояния Provider. Устаревшее состояние никогда не трактуется как гарантированный `AVAILABLE`.
+      enum:
+        - FRESH
+        - STALE
+      x-enum-descriptions:
+        FRESH: Проекция обновлена в пределах TTL.
+        STALE: Проекция устарела; реальное состояние неизвестно.
+    ProviderResourceStateSnapshot:
+      type: object
+      description: |
+        Каноническая проекция состояния привязанного ресурса по данным Provider (StateReader.listResourceStates). Используется для диагностики; состояние оценивается только вместе с `freshness`.
+      required:
+        - bindingId
+        - resourceId
+        - externalResourceId
+        - state
+        - freshness
+        - observedAt
+        - bindingStatus
+      properties:
+        bindingId:
+          type: string
+          format: uuid
+          description: Идентификатор привязки (`provider_resource_bindings.id`).
+        resourceId:
+          type: string
+          format: uuid
+          description: Canonical идентификатор ресурса Visora.
+        externalResourceId:
+          type: string
+          description: Идентификатор ресурса в Provider.
+        externalDisplayName:
+          type:
+            - string
+            - 'null'
+          description: Диагностическое имя.
+        state:
+          $ref: '#/components/schemas/ProviderResourceState'
+        freshness:
+          $ref: '#/components/schemas/ProviderStateFreshness'
+        staleSeconds:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          description: Сколько секунд проекция устарела (только при STALE).
+        observedAt:
+          type: string
+          format: date-time
+          description: Время последнего наблюдения состояния.
+        bindingStatus:
+          $ref: '#/components/schemas/BindingStatus'
+        activeSession:
+          type:
+            - object
+            - 'null'
+          description: Активная сессия по данным Provider, если есть.
+          properties:
+            externalSessionId:
+              type: string
+            startedAt:
+              type: string
+              format: date-time
+            expectedEndAt:
+              type:
+                - string
+                - 'null'
+              format: date-time
   parameters:
     ReservationId:
       name: reservationId
@@ -13658,6 +14169,54 @@ components:
         type: string
         format: uuid
       example: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+    ProviderEventId:
+      name: eventId
+      in: path
+      required: true
+      description: Идентификатор события Provider (`provider_events.id`, UUID).
+      schema:
+        type: string
+        format: uuid
+      example: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+    ProviderSignature:
+      name: X-Provider-Signature
+      in: header
+      required: true
+      description: |
+        Подпись тела запроса, вычисленная Provider с общим ключом (HMAC) или по webhook signing scheme. Валидация происходит до чтения тела; невалидная подпись = 401.
+      schema:
+        type: string
+      example: t=1722776400,v1=8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c
+    ProviderEventStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр по статусу обработки события.
+      schema:
+        $ref: '#/components/schemas/ProviderEventStatus'
+    ProviderEventTypeQuery:
+      name: eventType
+      in: query
+      required: false
+      description: Фильтр по типу события.
+      schema:
+        $ref: '#/components/schemas/ProviderEventType'
+    ProviderEventReceivedFrom:
+      name: receivedFrom
+      in: query
+      required: false
+      description: Нижняя граница по времени приёмки (ISO8601).
+      schema:
+        type: string
+        format: date-time
+    ProviderEventReceivedTo:
+      name: receivedTo
+      in: query
+      required: false
+      description: Верхняя граница по времени приёмки (ISO8601).
+      schema:
+        type: string
+        format: date-time
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -15541,6 +16100,102 @@ components:
             requestId: req_7e8f9a0b
             ipAddress: 91.102.44.12
             createdAt: '2026-08-04T09:30:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    ProviderWebhookRequestExample:
+      summary: Inbound-событие Provider (смена состояния ресурса)
+      value:
+        externalEventId: gizmo_evt_8f9a0b1c2d3e
+        eventType: RESOURCE_STATE_CHANGED
+        eventOccurredAt: '2026-08-05T11:30:00Z'
+        resource:
+          externalResourceId: gizmo-station-014
+          externalDisplayName: PC-014
+          state: IN_USE
+          activeSession:
+            externalSessionId: gizmo_sess_a1b2c3d4
+            startedAt: '2026-08-05T10:15:00Z'
+            expectedEndAt: '2026-08-05T12:15:00Z'
+          extra:
+            seatCode: '14'
+        payload:
+          reason: session_started
+    ProviderWebhookAckExample:
+      summary: Квитанция о приёмке события
+      value:
+        data:
+          receiptId: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+          externalEventId: gizmo_evt_8f9a0b1c2d3e
+          status: RECEIVED
+          requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+          timestamp: '2026-08-05T11:30:01Z'
+        meta:
+          requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+          timestamp: '2026-08-05T11:30:01Z'
+    ProviderEventListExample:
+      summary: Inbox событий Provider
+      value:
+        data:
+          - id: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            connectionId: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+            externalEventId: gizmo_evt_8f9a0b1c2d3e
+            eventType: RESOURCE_STATE_CHANGED
+            status: PROCESSED
+            eventOccurredAt: '2026-08-05T11:30:00Z'
+            receivedAt: '2026-08-05T11:30:01Z'
+            attemptCount: 1
+            correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+            payloadHash: a3f8e2d1c9b4a5f6
+            createdAt: '2026-08-05T11:30:01Z'
+          - id: d3e4f5a6-7b8c-4d9e-0f1a-2b3c4d5e6f70
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            connectionId: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+            externalEventId: gizmo_evt_8f9a0b1c2d3f
+            eventType: SESSION_ENDED
+            status: PROCESSED
+            eventOccurredAt: '2026-08-05T08:00:00Z'
+            receivedAt: '2026-08-05T08:00:02Z'
+            attemptCount: 1
+            correlationId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+            payloadHash: b4e9f3e2d1c5b6a7
+            createdAt: '2026-08-05T08:00:02Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    ProviderResourceStateListExample:
+      summary: Снапшот состояний привязанных ресурсов
+      value:
+        data:
+          - bindingId: 6a5b4c3d-2e1f-4d5e-8f0a-1b2c3d4e5f6a
+            resourceId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            externalResourceId: gizmo-station-014
+            externalDisplayName: PC-014
+            state: IN_USE
+            freshness: FRESH
+            observedAt: '2026-08-05T11:29:00Z'
+            bindingStatus: ACTIVE
+            activeSession:
+              externalSessionId: gizmo_sess_a1b2c3d4
+              startedAt: '2026-08-05T10:15:00Z'
+              expectedEndAt: '2026-08-05T12:15:00Z'
+          - bindingId: 7b6c5d4e-3f2a-4e6f-9f1b-2c3d4e5f6a7b
+            resourceId: 4a5b6c7d-8e9f-4a0b-8c1d-2e3f4a5b6c7d
+            externalResourceId: gizmo-station-015
+            externalDisplayName: PC-015
+            state: UNKNOWN
+            freshness: STALE
+            staleSeconds: 540
+            observedAt: '2026-08-05T10:30:00Z'
+            bindingStatus: ACTIVE
+            activeSession: null
         meta:
           page: 1
           pageSize: 20

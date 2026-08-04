@@ -415,6 +415,60 @@ BindingId:
     format: uuid
   example: 6a5b4c3d-2e1f-4d5e-8f0a-1b2c3d4e5f6a
 
+ProviderEventId:
+  name: eventId
+  in: path
+  required: true
+  description: Идентификатор события Provider (`provider_events.id`, UUID).
+  schema:
+    type: string
+    format: uuid
+  example: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+
+ProviderSignature:
+  name: X-Provider-Signature
+  in: header
+  required: true
+  description: |
+    Подпись тела запроса, вычисленная Provider с общим ключом (HMAC) или по webhook signing scheme. Валидация происходит до чтения тела; невалидная подпись = 401.
+  schema:
+    type: string
+  example: t=1722776400,v1=8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c
+
+ProviderEventStatusQuery:
+  name: status
+  in: query
+  required: false
+  description: Фильтр по статусу обработки события.
+  schema:
+    $ref: '../schemas/ProviderEventStatus.yaml'
+
+ProviderEventTypeQuery:
+  name: eventType
+  in: query
+  required: false
+  description: Фильтр по типу события.
+  schema:
+    $ref: '../schemas/ProviderEventType.yaml'
+
+ProviderEventReceivedFrom:
+  name: receivedFrom
+  in: query
+  required: false
+  description: Нижняя граница по времени приёмки (ISO8601).
+  schema:
+    type: string
+    format: date-time
+
+ProviderEventReceivedTo:
+  name: receivedTo
+  in: query
+  required: false
+  description: Верхняя граница по времени приёмки (ISO8601).
+  schema:
+    type: string
+    format: date-time
+
 ZoneQuery:
   name: zoneId
   in: query

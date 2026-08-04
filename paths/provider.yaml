@@ -1,0 +1,193 @@
+# =====================================================================
+# Visora API — Paths модуля Provider (inbound-интеграция)
+# =====================================================================
+
+'/webhooks/provider/{connectionId}/events':
+  post:
+    tags:
+      - provider
+    summary: Inbound webhook событий Provider (Gizmo и др.)
+    operationId: ingestProviderEvent
+    description: |-
+      Единая endpoint для приёмки событий Provider. Внешние системы шлют сюда canonical события (состояние ресурса, сессии, блокировки). Аутентификация — подпись `X-Provider-Signature`, а не пользовательский Bearer.
+
+      **Правила:**
+      - Дубликат по `externalEventId` возвращает `202` со `status = DUPLICATE` без повторной обработки.
+      - Секреты и PII в `payload` не принимаются (санитизация и ограничение размера).
+      - Если подключение не в `ACTIVE`/`DEGRADED` — событие отклоняется.
+      - Команды session/lock не считаются успешными без подтверждения (спекa 8.8).
+    parameters:
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/ProviderSignature'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - {}
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ProviderWebhookRequest.yaml'
+          examples:
+            event:
+              $ref: '../components/examples.yaml#/ProviderWebhookRequestExample'
+    responses:
+      '202':
+        description: Событие принято (или распознано как дубликат).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderWebhookAck.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              ack:
+                $ref: '../components/examples.yaml#/ProviderWebhookAckExample'
+      '400':
+        description: Некорректный конверт события (`INVALID_PROVIDER_EVENT`).
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        description: Невалидная подпись (`PROVIDER_SIGNATURE_INVALID`).
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        description: Подключение Provider не найдено.
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        description: 'Подключение не активно (`PROVIDER_CONNECTION_NOT_ACTIVE`).'
+        $ref: '../components/responses.yaml#/Conflict'
+      '503':
+        description: Provider в degraded-режиме или интеграция недоступна (`PROVIDER_STATE_STALE`).
+        $ref: '../components/responses.yaml#/ServiceUnavailable'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/events':
+  get:
+    tags:
+      - provider
+    summary: Inbox событий Provider (диагностика)
+    operationId: listProviderEvents
+    description: |
+      Поиск по bounded inbox `provider_events`. Support-только: фильтры по статусу, типу и времени приёмки. Не для аналитики (аналитика — в модуле Analytics).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/ProviderEventStatusQuery'
+      - $ref: '../components/parameters.yaml#/ProviderEventTypeQuery'
+      - $ref: '../components/parameters.yaml#/ProviderEventReceivedFrom'
+      - $ref: '../components/parameters.yaml#/ProviderEventReceivedTo'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Список событий.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ProviderEvent.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              events:
+                $ref: '../components/examples.yaml#/ProviderEventListExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/events/{eventId}':
+  get:
+    tags:
+      - provider
+    summary: Событие Provider по id
+    operationId: getProviderEvent
+    description: |
+      Детали записи `provider_events` (attemptCount, статус, санитизированный error code, correlation). Support-только.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/ProviderEventId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Событие.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ProviderEvent.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/resources/state':
+  get:
+    tags:
+      - provider
+    summary: Состояние привязанных ресурсов (снапшот Provider)
+    operationId: listProviderResourceStates
+    description: |
+      Canonical снапшот состояний всех привязанных к подключению ресурсов с признаком свежести (StateReader). Диагностика расхождений управляемой модели и Provider.
+
+      **Правило:** `STALE` (или `UNKNOWN`) состояние никогда не трактуется как `AVAILABLE`. При принятии броней нарушения учитываются политикой freshness (спека 8.8).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ProviderConnectionId'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Снапшот состояний ресурсов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ProviderResourceStateSnapshot.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              states:
+                $ref: '../components/examples.yaml#/ProviderResourceStateListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
