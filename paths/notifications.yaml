@@ -1,0 +1,257 @@
+# =====================================================================
+# Visora API — Paths модуля Notifications
+# =====================================================================
+
+'/me/notifications':
+  get:
+    tags:
+      - notifications
+    summary: Лента уведомлений пользователя
+    operationId: listMyNotifications
+    description: |
+      Лента уведомлений текущего пользователя (in-app). Фильтры по статусу, типу и «только непрочитанные». Сортировка по `createdAt DESC`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/NotificationStatusQuery'
+      - $ref: '../components/parameters.yaml#/NotificationTypeQuery'
+      - $ref: '../components/parameters.yaml#/NotificationUnreadOnly'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Лента уведомлений.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/NotificationSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              feed:
+                $ref: '../components/examples.yaml#/NotificationFeedExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/me/notifications/unread-count':
+  get:
+    tags:
+      - notifications
+    summary: Число непрочитанных уведомлений
+    operationId: getMyUnreadNotificationsCount
+    description: |
+      Быстрое получение числа непрочитанных уведомлений для бейджа. Дублирует счётчик ленты.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Число непрочитанных.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/UnreadNotificationsCount.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              count:
+                $ref: '../components/examples.yaml#/UnreadCountExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+
+'/me/notifications/read-all':
+  post:
+    tags:
+      - notifications
+    summary: Отметить все уведомления прочитанными
+    operationId: markAllMyNotificationsRead
+    description: |
+      Отмечает все непрочитанные уведомления текущего пользователя как прочитанные. Возвращает количество обновлённых записей.
+    parameters:
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Готово.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: object
+                  required: [markedReadCount]
+                  properties:
+                    markedReadCount:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+
+'/me/notifications/{notificationId}':
+  get:
+    tags:
+      - notifications
+    summary: Уведомление по id
+    operationId: getMyNotification
+    description: Детали уведомления, включая payload (deep-link метаданные).
+    parameters:
+      - $ref: '../components/parameters.yaml#/NotificationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Уведомление.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Notification.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+  patch:
+    tags:
+      - notifications
+    summary: Отметить уведомление прочитанным
+    operationId: markMyNotificationRead
+    description: |
+      Отмечает конкретное уведомление прочитанным. Идемпотентно: повторный вызов возвращает успех.
+    parameters:
+      - $ref: '../components/parameters.yaml#/NotificationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Уведомление отмечено прочитанным.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Notification.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+  delete:
+    tags:
+      - notifications
+    summary: Скрыть уведомление
+    operationId: hideMyNotification
+    description: |
+      Мягкое скрытие уведомления из ленты (soft-delete). Не затрагивает другие каналы доставки.
+    parameters:
+      - $ref: '../components/parameters.yaml#/NotificationId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Уведомление скрыто.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/me/notifications/preferences':
+  get:
+    tags:
+      - notifications
+    summary: Предпочтения уведомлений
+    operationId: getMyNotificationPreferences
+    description: |
+      Предпочтения уведомлений текущего пользователя: локаль, глобальное включение in-app и правила по типам.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Предпочтения.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/NotificationPreferences.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              prefs:
+                $ref: '../components/examples.yaml#/NotificationPreferencesExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+  put:
+    tags:
+      - notifications
+    summary: Обновить предпочтения уведомлений
+    operationId: updateMyNotificationPreferences
+    description: |
+      Частичное обновление предпочтений. Отсутствующие правила не изменяются. Решение о шаблонах/каналах доставки принадлежит Visora.
+    parameters:
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/NotificationPreferencesUpdateRequest.yaml'
+          examples:
+            update:
+              $ref: '../components/examples.yaml#/NotificationPreferencesUpdateExample'
+    responses:
+      '200':
+        description: Обновлённые предпочтения.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/NotificationPreferences.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'

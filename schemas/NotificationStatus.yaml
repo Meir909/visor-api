@@ -1,0 +1,14 @@
+type: string
+description: Статус логического уведомления (`notifications.status`).
+enum:
+  - PENDING
+  - DELIVERED
+  - READ
+  - FAILED
+  - CANCELLED
+x-enum-descriptions:
+  PENDING: Ожидает доставки.
+  DELIVERED: Доставлено в приложение.
+  READ: Прочитано пользователем.
+  FAILED: Доставка по всем каналам завершилась ошибкой.
+  CANCELLED: Отменено системой/пользователем.

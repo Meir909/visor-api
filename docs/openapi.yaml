@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов) и **Pricing** (rate card `pricing_rules` и explainable-расчёт цены quote). Остальные модули (Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов), **Pricing** (rate card `pricing_rules` и explainable-расчёт цены quote) и **Notifications** (in-app лента, read-состояние, предпочтения; доставка по каналам). Все 14 модулей контрактированы; добавление новых модулей не должно ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -874,7 +874,298 @@ tags:
       **Ошибки:** `PRICING_RULE_NOT_FOUND`, `PRICING_SCOPE_MISMATCH`, `PRICING_INVALID_PERIOD`, `PRICING_NO_BASE_RATE`, `PRICING_QUOTE_EXPIRED`, `PRICING_DURATION_NOT_ELIGIBLE`.
   - name: pricing-admin
     description: 'Управление правилами тарификации клуба (`pricing_rules`): список, создание, обновление, мягкое удаление. Доступно сотрудникам/владельцу с правом `pricing.promotion`.'
+  - name: notifications
+    description: |-
+      # Notifications
+
+      Пользовательский контур уведомлений: in-app лента, read-состояние, число непрочитанных и предпочтения. Генерация уведомлений и фактическая доставка делегируются каналам; здесь — read models пользователя.
+
+      ## Лента и предпочтения
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant U as User
+          participant N as Notifications
+          participant P as Preferences
+          U->>N: GET /me/notifications (лента)
+          N->>N: события → in-app уведомления
+          U->>P: PUT /me/notifications/preferences
+          P-->>U: обновлённые правила (по типам)
+      ```
+
+      **Правила:**
+      - Уведомления содержат замороженный локализованный контент; payload — только safe метаданные (без секретов и PII).
+      - Read-состояния: `PENDING` → `DELIVERED` → `READ`; скрытие — soft-delete.
+      - Шаблоны и решение «кому/когда» принадлежат Visora; клиент управляет только предпочтениями.
+      - In-app не удаляется при сбое внешних каналов (push/SMS/email — будущее).
+
+      **Ошибки:** `NOTIFICATION_NOT_FOUND`, `NOTIFICATION_PREFERENCE_INVALID`.
 paths:
+  /me/notifications:
+    get:
+      tags:
+        - notifications
+      summary: Лента уведомлений пользователя
+      operationId: listMyNotifications
+      description: |
+        Лента уведомлений текущего пользователя (in-app). Фильтры по статусу, типу и «только непрочитанные». Сортировка по `createdAt DESC`.
+      parameters:
+        - $ref: '#/components/parameters/NotificationStatusQuery'
+        - $ref: '#/components/parameters/NotificationTypeQuery'
+        - $ref: '#/components/parameters/NotificationUnreadOnly'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Лента уведомлений.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NotificationSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                feed:
+                  $ref: '#/components/examples/NotificationFeedExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /me/notifications/unread-count:
+    get:
+      tags:
+        - notifications
+      summary: Число непрочитанных уведомлений
+      operationId: getMyUnreadNotificationsCount
+      description: |
+        Быстрое получение числа непрочитанных уведомлений для бейджа. Дублирует счётчик ленты.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Число непрочитанных.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UnreadNotificationsCount'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                count:
+                  $ref: '#/components/examples/UnreadCountExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/notifications/read-all:
+    post:
+      tags:
+        - notifications
+      summary: Отметить все уведомления прочитанными
+      operationId: markAllMyNotificationsRead
+      description: |
+        Отмечает все непрочитанные уведомления текущего пользователя как прочитанные. Возвращает количество обновлённых записей.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Готово.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - markedReadCount
+                    properties:
+                      markedReadCount:
+                        type: integer
+                        format: int32
+                        minimum: 0
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/notifications/{notificationId}:
+    get:
+      tags:
+        - notifications
+      summary: Уведомление по id
+      operationId: getMyNotification
+      description: Детали уведомления, включая payload (deep-link метаданные).
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Уведомление.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Notification'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - notifications
+      summary: Отметить уведомление прочитанным
+      operationId: markMyNotificationRead
+      description: |
+        Отмечает конкретное уведомление прочитанным. Идемпотентно: повторный вызов возвращает успех.
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Уведомление отмечено прочитанным.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Notification'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - notifications
+      summary: Скрыть уведомление
+      operationId: hideMyNotification
+      description: |
+        Мягкое скрытие уведомления из ленты (soft-delete). Не затрагивает другие каналы доставки.
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Уведомление скрыто.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/notifications/preferences:
+    get:
+      tags:
+        - notifications
+      summary: Предпочтения уведомлений
+      operationId: getMyNotificationPreferences
+      description: |
+        Предпочтения уведомлений текущего пользователя: локаль, глобальное включение in-app и правила по типам.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Предпочтения.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/NotificationPreferences'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                prefs:
+                  $ref: '#/components/examples/NotificationPreferencesExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags:
+        - notifications
+      summary: Обновить предпочтения уведомлений
+      operationId: updateMyNotificationPreferences
+      description: |
+        Частичное обновление предпочтений. Отсутствующие правила не изменяются. Решение о шаблонах/каналах доставки принадлежит Visora.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreferencesUpdateRequest'
+            examples:
+              update:
+                $ref: '#/components/examples/NotificationPreferencesUpdateExample'
+      responses:
+        '200':
+          description: Обновлённые предпочтения.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/NotificationPreferences'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /organizations/{organizationId}/clubs/{clubId}/pricing/quote:
     post:
       tags:
@@ -8307,6 +8598,8 @@ components:
         - PRICING_NO_BASE_RATE
         - PRICING_QUOTE_EXPIRED
         - PRICING_DURATION_NOT_ELIGIBLE
+        - NOTIFICATION_NOT_FOUND
+        - NOTIFICATION_PREFERENCE_INVALID
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -14400,6 +14693,256 @@ components:
           type: string
           maxLength: 240
           description: Объяснение строки.
+    NotificationType:
+      type: string
+      description: Стабильный машиночитаемый тип уведомления.
+      enum:
+        - RESERVATION_CONFIRMED
+        - RESERVATION_STARTS_SOON
+        - RESERVATION_CANCELLED
+        - EXTENSION_APPROVED
+        - EXTENSION_REJECTED
+        - NO_SHOW_RECORDED
+        - CLUB_CLOSED_MAINTENANCE
+        - PAYMENT_STATUS_CHANGED
+      x-enum-descriptions:
+        RESERVATION_CONFIRMED: Бронирование подтверждено.
+        RESERVATION_STARTS_SOON: Бронирование скоро начнётся.
+        RESERVATION_CANCELLED: Бронирование отменено.
+        EXTENSION_APPROVED: Запрос продления одобрен.
+        EXTENSION_REJECTED: Запрос продления отклонён.
+        NO_SHOW_RECORDED: Зафиксирована неявка.
+        CLUB_CLOSED_MAINTENANCE: Клуб закрыт на техническое обслуживание.
+        PAYMENT_STATUS_CHANGED: Изменился статус оплаты.
+    NotificationStatus:
+      type: string
+      description: Статус логического уведомления (`notifications.status`).
+      enum:
+        - PENDING
+        - DELIVERED
+        - READ
+        - FAILED
+        - CANCELLED
+      x-enum-descriptions:
+        PENDING: Ожидает доставки.
+        DELIVERED: Доставлено в приложение.
+        READ: Прочитано пользователем.
+        FAILED: Доставка по всем каналам завершилась ошибкой.
+        CANCELLED: Отменено системой/пользователем.
+    NotificationChannel:
+      type: string
+      description: Канал доставки уведомления. В MVP реализован `IN_APP`; остальные зарезервированы для будущих channel-адаптеров.
+      enum:
+        - IN_APP
+        - PUSH
+        - SMS
+        - EMAIL
+      x-enum-descriptions:
+        IN_APP: Уведомление в приложении (реализовано в MVP).
+        PUSH: Push-уведомление (будущий канал).
+        SMS: СМС (будущий канал).
+        EMAIL: Email (будущий канал).
+    Notification:
+      type: object
+      description: |
+        Логическое уведомление пользователя (`notifications`). Содержит замороженный локализованный контент и read-состояние. Payload не содержит секретов и незамаскированных PII.
+      required:
+        - id
+        - userId
+        - notificationType
+        - title
+        - body
+        - locale
+        - status
+        - priority
+        - payload
+        - scheduledAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Тенант, сгенерировавший уведомление.
+        userId:
+          type: string
+          format: uuid
+          description: Получатель.
+        clubId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Связанный клуб (опционально).
+        reservationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Связанная бронь (опционально).
+        notificationType:
+          $ref: '#/components/schemas/NotificationType'
+        title:
+          type: string
+          maxLength: 200
+          description: Замороженный локализованный заголовок.
+        body:
+          type: string
+          description: Замороженный локализованный текст.
+        locale:
+          type: string
+          description: Локаль, в которой отрендерено уведомление.
+          example: ru-RU
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        priority:
+          type: integer
+          format: int32
+          description: Приоритет доставки/отображения (больше = выше).
+        payload:
+          type: object
+          description: Safe структурированные метаданные (deep-link, ключи локализации); без секретов и PII.
+          default: {}
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Самое раннее время доставки.
+        deliveredAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время доставки в приложение.
+        readAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время прочтения.
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время истечения видимости/доставки.
+        createdAt:
+          type: string
+          format: date-time
+    NotificationSummary:
+      type: object
+      description: Лёгкий элемент ленты уведомлений (feed). Содержит заголовок, тело и состояние; без объёмного payload.
+      required:
+        - id
+        - notificationType
+        - title
+        - body
+        - status
+        - priority
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        notificationType:
+          $ref: '#/components/schemas/NotificationType'
+        clubId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        reservationId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        title:
+          type: string
+          maxLength: 200
+        body:
+          type: string
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        priority:
+          type: integer
+          format: int32
+        createdAt:
+          type: string
+          format: date-time
+        readAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    NotificationPreferenceRule:
+      type: object
+      description: Правило предпочтения по конкретному типу уведомления.
+      required:
+        - type
+        - enabled
+        - channels
+      properties:
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        enabled:
+          type: boolean
+          description: Разрешён ли этот тип.
+        channels:
+          type: array
+          description: Каналы, разрешённые для этого типа.
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+    NotificationPreferences:
+      type: object
+      description: |
+        Предпочтения уведомлений пользователя. Определяют, какие типы событий и по каким каналам доставляются. Настройка каналов/шаблонов принадлежит Visora, а не клиенту — здесь только пользовательские предпочтения.
+      required:
+        - locale
+        - inAppEnabled
+        - rules
+      properties:
+        locale:
+          type: string
+          description: Локаль пользователя для уведомлений.
+          example: ru-RU
+        inAppEnabled:
+          type: boolean
+          description: Глобально разрешены ли уведомления в приложении.
+        rules:
+          type: array
+          description: Предпочтения по типам уведомлений.
+          items:
+            $ref: '#/components/schemas/NotificationPreferenceRule'
+    NotificationPreferencesUpdateRequest:
+      type: object
+      description: Обновление предпочтений уведомлений (partial). Отсутствующие правила сохраняются без изменений.
+      properties:
+        locale:
+          type: string
+          description: Локаль пользователя для уведомлений.
+          example: ru-RU
+        inAppEnabled:
+          type: boolean
+        rules:
+          type: array
+          description: Правила, которые требуется обновить (по ключу type).
+          items:
+            $ref: '#/components/schemas/NotificationPreferenceRule'
+    UnreadNotificationsCount:
+      type: object
+      description: Количество непрочитанных уведомлений пользователя.
+      required:
+        - count
+      properties:
+        count:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Число непрочитанных уведомлений.
+          example: 3
   parameters:
     ReservationId:
       name: reservationId
@@ -15054,6 +15597,36 @@ components:
       in: query
       required: false
       description: Фильтр по операционной активации.
+      schema:
+        type: boolean
+    NotificationId:
+      name: notificationId
+      in: path
+      required: true
+      description: Идентификатор уведомления (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+    NotificationStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр по статусу уведомления.
+      schema:
+        $ref: '#/components/schemas/NotificationStatus'
+    NotificationTypeQuery:
+      name: notificationType
+      in: query
+      required: false
+      description: Фильтр по типу уведомления.
+      schema:
+        $ref: '#/components/schemas/NotificationType'
+    NotificationUnreadOnly:
+      name: unreadOnly
+      in: query
+      required: false
+      description: Фильтр «только непрочитанные».
       schema:
         type: boolean
   responses:
@@ -17185,6 +17758,76 @@ components:
         meta:
           requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
           timestamp: '2026-08-05T12:00:00Z'
+    NotificationFeedExample:
+      summary: Лента уведомлений пользователя
+      value:
+        data:
+          - id: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+            notificationType: RESERVATION_CONFIRMED
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            reservationId: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+            title: Бронирование подтверждено
+            body: ПК PC-014, 6 августа 17:00 – 21:00, Caspian Esports
+            status: DELIVERED
+            priority: 2
+            createdAt: '2026-08-05T12:05:00Z'
+          - id: d3e4f5a6-7b8c-4d9e-0f1a-2b3c4d5e6f70
+            notificationType: RESERVATION_STARTS_SOON
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            reservationId: 6f5e4d3c-2b1a-4d3e-9f0a-1b2c3d4e5f6a
+            title: Бронирование скоро начнётся
+            body: 'Начало через 30 минут: PC-014, Caspian Esports'
+            status: READ
+            priority: 3
+            createdAt: '2026-08-05T11:35:00Z'
+            readAt: '2026-08-05T11:36:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    UnreadCountExample:
+      summary: Число непрочитанных уведомлений
+      value:
+        data:
+          count: 3
+        meta:
+          requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+          timestamp: '2026-08-05T12:06:00Z'
+    NotificationPreferencesExample:
+      summary: Предпочтения уведомлений
+      value:
+        data:
+          locale: ru-RU
+          inAppEnabled: true
+          rules:
+            - type: RESERVATION_CONFIRMED
+              enabled: true
+              channels:
+                - IN_APP
+                - EMAIL
+            - type: RESERVATION_STARTS_SOON
+              enabled: true
+              channels:
+                - IN_APP
+                - PUSH
+            - type: NO_SHOW_RECORDED
+              enabled: false
+              channels:
+                - IN_APP
+        meta:
+          requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+          timestamp: '2026-08-05T12:06:00Z'
+    NotificationPreferencesUpdateExample:
+      summary: Обновление предпочтений (частичное)
+      value:
+        locale: ru-RU
+        rules:
+          - type: NO_SHOW_RECORDED
+            enabled: true
+            channels:
+              - IN_APP
+              - SMS
     WalkInReservationRequestExample:
       summary: Тело walk-in брони (гость без аккаунта)
       value:

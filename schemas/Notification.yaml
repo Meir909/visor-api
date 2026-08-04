@@ -1,0 +1,89 @@
+type: object
+description: |
+  Логическое уведомление пользователя (`notifications`). Содержит замороженный локализованный контент и read-состояние. Payload не содержит секретов и незамаскированных PII.
+required:
+  - id
+  - userId
+  - notificationType
+  - title
+  - body
+  - locale
+  - status
+  - priority
+  - payload
+  - scheduledAt
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+  organizationId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Тенант, сгенерировавший уведомление.'
+  userId:
+    type: string
+    format: uuid
+    description: Получатель.
+  clubId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Связанный клуб (опционально).'
+  reservationId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Связанная бронь (опционально).'
+  notificationType:
+    $ref: '../schemas/NotificationType.yaml'
+  title:
+    type: string
+    maxLength: 200
+    description: Замороженный локализованный заголовок.
+  body:
+    type: string
+    description: Замороженный локализованный текст.
+  locale:
+    type: string
+    description: Локаль, в которой отрендерено уведомление.
+    example: ru-RU
+  status:
+    $ref: '../schemas/NotificationStatus.yaml'
+  priority:
+    type: integer
+    format: int32
+    description: Приоритет доставки/отображения (больше = выше).
+  payload:
+    type: object
+    description: Safe структурированные метаданные (deep-link, ключи локализации); без секретов и PII.
+    default: {}
+  scheduledAt:
+    type: string
+    format: date-time
+    description: Самое раннее время доставки.
+  deliveredAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: 'Время доставки в приложение.'
+  readAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: 'Время прочтения.'
+  expiresAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: 'Время истечения видимости/доставки.'
+  createdAt:
+    type: string
+    format: date-time

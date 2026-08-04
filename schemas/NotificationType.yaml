@@ -1,0 +1,20 @@
+type: string
+description: Стабильный машиночитаемый тип уведомления.
+enum:
+  - RESERVATION_CONFIRMED
+  - RESERVATION_STARTS_SOON
+  - RESERVATION_CANCELLED
+  - EXTENSION_APPROVED
+  - EXTENSION_REJECTED
+  - NO_SHOW_RECORDED
+  - CLUB_CLOSED_MAINTENANCE
+  - PAYMENT_STATUS_CHANGED
+x-enum-descriptions:
+  RESERVATION_CONFIRMED: Бронирование подтверждено.
+  RESERVATION_STARTS_SOON: Бронирование скоро начнётся.
+  RESERVATION_CANCELLED: Бронирование отменено.
+  EXTENSION_APPROVED: Запрос продления одобрен.
+  EXTENSION_REJECTED: Запрос продления отклонён.
+  NO_SHOW_RECORDED: Зафиксирована неявка.
+  CLUB_CLOSED_MAINTENANCE: Клуб закрыт на техническое обслуживание.
+  PAYMENT_STATUS_CHANGED: Изменился статус оплаты.

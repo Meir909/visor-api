@@ -1,0 +1,14 @@
+type: object
+description: Обновление предпочтений уведомлений (partial). Отсутствующие правила сохраняются без изменений.
+properties:
+  locale:
+    type: string
+    description: Локаль пользователя для уведомлений.
+    example: ru-RU
+  inAppEnabled:
+    type: boolean
+  rules:
+    type: array
+    description: Правила, которые требуется обновить (по ключу type).
+    items:
+      $ref: '../schemas/NotificationPreferenceRule.yaml'

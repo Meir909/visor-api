@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов) и **Pricing** (rate card `pricing_rules` и explainable-расчёт цены quote). Остальные модули (Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов), **Pricing** (rate card `pricing_rules` и explainable-расчёт цены quote) и **Notifications** (in-app лента, read-состояние, предпочтения; доставка по каналам). Все 14 модулей контрактированы; добавление новых модулей не должно ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -899,7 +899,45 @@ tags:
     description: |-
       Управление правилами тарификации клуба (`pricing_rules`): список, создание, обновление, мягкое удаление. Доступно сотрудникам/владельцу с правом `pricing.promotion`.
 
+  - name: notifications
+    description: |-
+      # Notifications
+
+      Пользовательский контур уведомлений: in-app лента, read-состояние, число непрочитанных и предпочтения. Генерация уведомлений и фактическая доставка делегируются каналам; здесь — read models пользователя.
+
+      ## Лента и предпочтения
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant U as User
+          participant N as Notifications
+          participant P as Preferences
+          U->>N: GET /me/notifications (лента)
+          N->>N: события → in-app уведомления
+          U->>P: PUT /me/notifications/preferences
+          P-->>U: обновлённые правила (по типам)
+      ```
+
+      **Правила:**
+      - Уведомления содержат замороженный локализованный контент; payload — только safe метаданные (без секретов и PII).
+      - Read-состояния: `PENDING` → `DELIVERED` → `READ`; скрытие — soft-delete.
+      - Шаблоны и решение «кому/когда» принадлежат Visora; клиент управляет только предпочтениями.
+      - In-app не удаляется при сбое внешних каналов (push/SMS/email — будущее).
+
+      **Ошибки:** `NOTIFICATION_NOT_FOUND`, `NOTIFICATION_PREFERENCE_INVALID`.
+
 paths:
+  '/me/notifications':
+    $ref: './paths/notifications.yaml#/~1me~1notifications'
+  '/me/notifications/unread-count':
+    $ref: './paths/notifications.yaml#/~1me~1notifications~1unread-count'
+  '/me/notifications/read-all':
+    $ref: './paths/notifications.yaml#/~1me~1notifications~1read-all'
+  '/me/notifications/{notificationId}':
+    $ref: './paths/notifications.yaml#/~1me~1notifications~1{notificationId}'
+  '/me/notifications/preferences':
+    $ref: './paths/notifications.yaml#/~1me~1notifications~1preferences'
   '/organizations/{organizationId}/clubs/{clubId}/pricing/quote':
     $ref: './paths/pricing.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1pricing~1quote'
   '/organizations/{organizationId}/clubs/{clubId}/pricing-rules':
@@ -1468,6 +1506,24 @@ components:
       $ref: './schemas/PriceQuoteRequest.yaml'
     AppliedPriceRule:
       $ref: './schemas/AppliedPriceRule.yaml'
+    NotificationType:
+      $ref: './schemas/NotificationType.yaml'
+    NotificationStatus:
+      $ref: './schemas/NotificationStatus.yaml'
+    NotificationChannel:
+      $ref: './schemas/NotificationChannel.yaml'
+    Notification:
+      $ref: './schemas/Notification.yaml'
+    NotificationSummary:
+      $ref: './schemas/NotificationSummary.yaml'
+    NotificationPreferenceRule:
+      $ref: './schemas/NotificationPreferenceRule.yaml'
+    NotificationPreferences:
+      $ref: './schemas/NotificationPreferences.yaml'
+    NotificationPreferencesUpdateRequest:
+      $ref: './schemas/NotificationPreferencesUpdateRequest.yaml'
+    UnreadNotificationsCount:
+      $ref: './schemas/UnreadNotificationsCount.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1613,6 +1669,14 @@ components:
       $ref: './components/parameters.yaml#/PricingRuleScopeQuery'
     PricingRuleActiveQuery:
       $ref: './components/parameters.yaml#/PricingRuleActiveQuery'
+    NotificationId:
+      $ref: './components/parameters.yaml#/NotificationId'
+    NotificationStatusQuery:
+      $ref: './components/parameters.yaml#/NotificationStatusQuery'
+    NotificationTypeQuery:
+      $ref: './components/parameters.yaml#/NotificationTypeQuery'
+    NotificationUnreadOnly:
+      $ref: './components/parameters.yaml#/NotificationUnreadOnly'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -1775,3 +1839,11 @@ components:
       $ref: './components/examples.yaml#/PricingRuleCreateRequestExample'
     PricingRuleExample:
       $ref: './components/examples.yaml#/PricingRuleExample'
+    NotificationFeedExample:
+      $ref: './components/examples.yaml#/NotificationFeedExample'
+    UnreadCountExample:
+      $ref: './components/examples.yaml#/UnreadCountExample'
+    NotificationPreferencesExample:
+      $ref: './components/examples.yaml#/NotificationPreferencesExample'
+    NotificationPreferencesUpdateExample:
+      $ref: './components/examples.yaml#/NotificationPreferencesUpdateExample'

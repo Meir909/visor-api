@@ -1,0 +1,11 @@
+type: object
+description: Количество непрочитанных уведомлений пользователя.
+required:
+  - count
+properties:
+  count:
+    type: integer
+    format: int32
+    minimum: 0
+    description: Число непрочитанных уведомлений.
+    example: 3

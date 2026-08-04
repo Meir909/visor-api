@@ -1,0 +1,44 @@
+type: object
+description: Лёгкий элемент ленты уведомлений (feed). Содержит заголовок, тело и состояние; без объёмного payload.
+required:
+  - id
+  - notificationType
+  - title
+  - body
+  - status
+  - priority
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+  notificationType:
+    $ref: '../schemas/NotificationType.yaml'
+  clubId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  reservationId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  title:
+    type: string
+    maxLength: 200
+  body:
+    type: string
+  status:
+    $ref: '../schemas/NotificationStatus.yaml'
+  priority:
+    type: integer
+    format: int32
+  createdAt:
+    type: string
+    format: date-time
+  readAt:
+    type:
+      - string
+      - 'null'
+    format: date-time

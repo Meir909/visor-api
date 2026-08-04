@@ -1,0 +1,12 @@
+type: string
+description: Канал доставки уведомления. В MVP реализован `IN_APP`; остальные зарезервированы для будущих channel-адаптеров.
+enum:
+  - IN_APP
+  - PUSH
+  - SMS
+  - EMAIL
+x-enum-descriptions:
+  IN_APP: Уведомление в приложении (реализовано в MVP).
+  PUSH: Push-уведомление (будущий канал).
+  SMS: СМС (будущий канал).
+  EMAIL: Email (будущий канал).

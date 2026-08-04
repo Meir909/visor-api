@@ -469,6 +469,40 @@ ProviderEventReceivedTo:
     type: string
     format: date-time
 
+NotificationId:
+  name: notificationId
+  in: path
+  required: true
+  description: Идентификатор уведомления (UUID).
+  schema:
+    type: string
+    format: uuid
+  example: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+
+NotificationStatusQuery:
+  name: status
+  in: query
+  required: false
+  description: Фильтр по статусу уведомления.
+  schema:
+    $ref: '../schemas/NotificationStatus.yaml'
+
+NotificationTypeQuery:
+  name: notificationType
+  in: query
+  required: false
+  description: Фильтр по типу уведомления.
+  schema:
+    $ref: '../schemas/NotificationType.yaml'
+
+NotificationUnreadOnly:
+  name: unreadOnly
+  in: query
+  required: false
+  description: Фильтр «только непрочитанные».
+  schema:
+    type: boolean
+
 PricingRuleId:
   name: ruleId
   in: path

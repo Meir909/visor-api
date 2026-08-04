@@ -1,0 +1,17 @@
+type: object
+description: Правило предпочтения по конкретному типу уведомления.
+required:
+  - type
+  - enabled
+  - channels
+properties:
+  type:
+    $ref: '../schemas/NotificationType.yaml'
+  enabled:
+    type: boolean
+    description: Разрешён ли этот тип.
+  channels:
+    type: array
+    description: Каналы, разрешённые для этого типа.
+    items:
+      $ref: '../schemas/NotificationChannel.yaml'

@@ -2076,3 +2076,70 @@ PricingRuleExample:
     meta:
       requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
       timestamp: '2026-08-05T12:00:00Z'
+
+NotificationFeedExample:
+  summary: Лента уведомлений пользователя
+  value:
+    data:
+      - id: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+        notificationType: RESERVATION_CONFIRMED
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        reservationId: 5f4e3d2c-1b2a-4c3d-9e8f-0a1b2c3d4e5f
+        title: Бронирование подтверждено
+        body: 'ПК PC-014, 6 августа 17:00 – 21:00, Caspian Esports'
+        status: DELIVERED
+        priority: 2
+        createdAt: '2026-08-05T12:05:00Z'
+      - id: d3e4f5a6-7b8c-4d9e-0f1a-2b3c4d5e6f70
+        notificationType: RESERVATION_STARTS_SOON
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        reservationId: 6f5e4d3c-2b1a-4d3e-9f0a-1b2c3d4e5f6a
+        title: Бронирование скоро начнётся
+        body: 'Начало через 30 минут: PC-014, Caspian Esports'
+        status: READ
+        priority: 3
+        createdAt: '2026-08-05T11:35:00Z'
+        readAt: '2026-08-05T11:36:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+UnreadCountExample:
+  summary: Число непрочитанных уведомлений
+  value:
+    data:
+      count: 3
+    meta:
+      requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+      timestamp: '2026-08-05T12:06:00Z'
+
+NotificationPreferencesExample:
+  summary: Предпочтения уведомлений
+  value:
+    data:
+      locale: ru-RU
+      inAppEnabled: true
+      rules:
+        - type: RESERVATION_CONFIRMED
+          enabled: true
+          channels: [IN_APP, EMAIL]
+        - type: RESERVATION_STARTS_SOON
+          enabled: true
+          channels: [IN_APP, PUSH]
+        - type: NO_SHOW_RECORDED
+          enabled: false
+          channels: [IN_APP]
+    meta:
+      requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+      timestamp: '2026-08-05T12:06:00Z'
+
+NotificationPreferencesUpdateExample:
+  summary: Обновление предпочтений (частичное)
+  value:
+    locale: ru-RU
+    rules:
+      - type: NO_SHOW_RECORDED
+        enabled: true
+        channels: [IN_APP, SMS]
