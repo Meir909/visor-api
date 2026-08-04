@@ -1,0 +1,83 @@
+type: object
+description: |
+  Обновление правила тарификации. Передаются только изменяемые поля (partial). Применённые исторические цены не пересчитываются.
+properties:
+  name:
+    type:
+      - string
+      - 'null'
+    maxLength: 160
+  calculationType:
+    $ref: '../schemas/PricingCalculationType.yaml'
+  amountMinor:
+    type:
+      - string
+      - 'null'
+    pattern: '^-?\d+$'
+  percentageBasisPoints:
+    type:
+      - integer
+      - 'null'
+    format: int32
+  currency:
+    type:
+      - string
+      - 'null'
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT
+  priority:
+    type:
+      - integer
+      - 'null'
+    format: int32
+  daysOfWeek:
+    type:
+      - array
+      - 'null'
+    items:
+      type: integer
+      minimum: 1
+      maximum: 7
+  localStartTime:
+    type:
+      - string
+      - 'null'
+    description: 'Локальное время начала окна (HH:MM:SS); задаётся вместе с localEndTime.'
+  localEndTime:
+    type:
+      - string
+      - 'null'
+    description: 'Локальное время окончания окна (HH:MM:SS).'
+  crossesMidnight:
+    type: boolean
+  validFrom:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  validUntil:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  minimumDurationMinutes:
+    type:
+      - integer
+      - 'null'
+    format: int32
+  maximumDurationMinutes:
+    type:
+      - integer
+      - 'null'
+    format: int32
+  isStackable:
+    type: boolean
+  isActive:
+    type: boolean
+  conditions:
+    type:
+      - object
+      - 'null'
+    description: Версионированные будущие условия.

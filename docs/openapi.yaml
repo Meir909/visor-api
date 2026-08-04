@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов). Остальные модули (Pricing, Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов) и **Pricing** (rate card `pricing_rules` и explainable-расчёт цены quote). Остальные модули (Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -843,7 +843,297 @@ tags:
       - Команды session/lock не считаются успешными без подтверждения.
 
       **Ошибки:** `PROVIDER_SIGNATURE_INVALID`, `INVALID_PROVIDER_EVENT`, `PROVIDER_EVENT_NOT_FOUND`, `PROVIDER_CONNECTION_NOT_ACTIVE`, `PROVIDER_STATE_STALE`.
+  - name: pricing
+    description: |-
+      # Pricing (тарифы и расчёт цены)
+
+      Расчёт explainable-цены (quote) для бронирования и управление rate card (`pricing_rules`). Промокоды/скидки — в модуле Admin (`admin-promotions`); здесь — базовая тарификация и предпросмотр цены.
+
+      ## Расчёт цены (quote)
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant P as Client
+          participant Q as POST /pricing/quote
+          participant E as PricingEngine
+          P->>Q: interval + ресурсы + (promo)
+          Q->>E: разрешение правил
+          E->>Q: PriceQuote (appliedRules)
+          Q-->>P: quote (expiresAt)
+      ```
+
+      **Порядок разрешения тарифов (спека 4.5):**
+      1. override ресурса → правило ресурса → зона/тип → дефолт клуба;
+      2. применимые скидки (happy-hour / промокод) после базовой цены;
+      3. связи разрешаются по специфичности, затем `priority`, затем стабильному `ruleId`;
+      4. детерминизм: одна версия resolver → одинаковая цена для одного входа.
+
+      Историческая цена брони не пересчитывается при изменении правил; применённые правила фиксируются в неизменяемых компонентах цены.
+
+      **Ошибки:** `PRICING_RULE_NOT_FOUND`, `PRICING_SCOPE_MISMATCH`, `PRICING_INVALID_PERIOD`, `PRICING_NO_BASE_RATE`, `PRICING_QUOTE_EXPIRED`, `PRICING_DURATION_NOT_ELIGIBLE`.
+  - name: pricing-admin
+    description: 'Управление правилами тарификации клуба (`pricing_rules`): список, создание, обновление, мягкое удаление. Доступно сотрудникам/владельцу с правом `pricing.promotion`.'
 paths:
+  /organizations/{organizationId}/clubs/{clubId}/pricing/quote:
+    post:
+      tags:
+        - pricing
+      summary: Рассчитать цену брони (quote)
+      operationId: createPriceQuote
+      description: |-
+        Вычисляет объяснимую цену (quote) для будущего бронирования, не создавая и не резервируя ресурсы. Используется на шаге предпросмотра брони.
+
+        **Правила разрешения тарифов (спека 4.5):**
+        1. override ресурса → правило ресурса → зона/тип → дефолт клуба;
+        2. после базовой цены применяются применимые скидки (happy-hour / промокод);
+        3. связи разрешаются по специфичности, затем `priority`, затем стабильному `ruleId`;
+        4. один и тот же resolver версия даёт одинаковую цену для одного входа.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceQuoteRequest'
+            examples:
+              quote:
+                $ref: '#/components/examples/PriceQuoteRequestExample'
+      responses:
+        '200':
+          description: Расчёт цены.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PriceQuote'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                quote:
+                  $ref: '#/components/examples/PriceQuoteExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/pricing-rules:
+    get:
+      tags:
+        - pricing-admin
+      summary: Список правил тарификации
+      operationId: listPricingRules
+      description: |
+        Правила тарификации (`pricing_rules`) клуба с фильтрами по типу, области действия и активации. Применённые исторические цены не зависят от изменений правил.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/PricingRuleTypeQuery'
+        - $ref: '#/components/parameters/PricingRuleScopeQuery'
+        - $ref: '#/components/parameters/PricingRuleActiveQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список правил.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PricingRule'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                rules:
+                  $ref: '#/components/examples/PricingRuleListExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    post:
+      tags:
+        - pricing-admin
+      summary: Создать правило тарификации
+      operationId: createPricingRule
+      description: |
+        Создаёт правило тарификации. Проверка согласованности области действия: CLUB — без zone/resource; ZONE — обязательная zone без resource; RESOURCE — обязательный resource. Ровно одно значение расчёта согласно calculationType.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingRuleCreateRequest'
+            examples:
+              create:
+                $ref: '#/components/examples/PricingRuleCreateRequestExample'
+      responses:
+        '201':
+          description: Правило создано.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PricingRule'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/PricingRuleExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/pricing-rules/{ruleId}:
+    get:
+      tags:
+        - pricing-admin
+      summary: Правило тарификации по id
+      operationId: getPricingRule
+      description: Детали правила тарификации.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/PricingRuleId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Правило.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PricingRule'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - pricing-admin
+      summary: Обновить правило тарификации
+      operationId: updatePricingRule
+      description: |
+        Частичное обновление правила. Изменения не пересчитывают уже подтверждённые брони — применённые цены фиксируются в неизменяемых компонентах.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/PricingRuleId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingRuleUpdateRequest'
+      responses:
+        '200':
+          description: Правило обновлено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PricingRule'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+        - pricing-admin
+      summary: Удалить правило тарификации
+      operationId: deletePricingRule
+      description: |
+        Мягкое удаление правила (soft-delete). Удалённое правило не применяется к новым quote; исторические компоненты цены сохраняют ссылку на правило.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/PricingRuleId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Правило мягко удалено.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /webhooks/provider/{connectionId}/events:
     post:
       tags:
@@ -8011,6 +8301,12 @@ components:
         - PROVIDER_EVENT_NOT_FOUND
         - PROVIDER_CONNECTION_NOT_ACTIVE
         - PROVIDER_STATE_STALE
+        - PRICING_RULE_NOT_FOUND
+        - PRICING_SCOPE_MISMATCH
+        - PRICING_INVALID_PERIOD
+        - PRICING_NO_BASE_RATE
+        - PRICING_QUOTE_EXPIRED
+        - PRICING_DURATION_NOT_ELIGIBLE
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -13591,6 +13887,519 @@ components:
                 - string
                 - 'null'
               format: date-time
+    PricingRuleType:
+      type: string
+      description: Тип правила тарификации.
+      enum:
+        - BASE
+        - HAPPY_HOUR
+        - SURCHARGE
+        - DYNAMIC
+      x-enum-descriptions:
+        BASE: Базовый тариф (умолчание клуба/зоны/ресурса).
+        HAPPY_HOUR: Скидочный/повышенный тариф в окне времени (например, счастливые часы).
+        SURCHARGE: Наценка/доплата поверх базового тарифа.
+        DYNAMIC: Динамический тариф (зарезервирован, будущая версия).
+    PricingRuleScope:
+      type: string
+      description: Область применения правила тарификации.
+      enum:
+        - CLUB
+        - ZONE
+        - RESOURCE
+      x-enum-descriptions:
+        CLUB: Правило действует на весь клуб (без zone/resource).
+        ZONE: Правило действует на зону клуба.
+        RESOURCE: Правило действует на конкретный ресурс (компьютер/VIP-комнату).
+    PricingCalculationType:
+      type: string
+      description: Способ расчёта правила тарификации. Для каждого правила задаётся ровно одно значение расчёта.
+      enum:
+        - FIXED_RATE
+        - FIXED_ADJUSTMENT
+        - PERCENT_ADJUSTMENT
+      x-enum-descriptions:
+        FIXED_RATE: Фиксированная ставка (amountMinor; обычно BASE).
+        FIXED_ADJUSTMENT: Фиксированная надбавка/скидка в сумме (amountMinor).
+        PERCENT_ADJUSTMENT: Процентная надбавка/скидка (percentageBasisPoints; 2000 = 20 %).
+    PricingRule:
+      type: object
+      description: |
+        Правило тарификации (`pricing_rules`). Версионировано, гибко по области действия (клуб/зона/ресурс), happy-hour окнам и будущим динамическим правилам. Безопасно изменяется/удаляется (soft), так как применённые правила фиксируются в неизменяемых компонентах цены брони.
+      required:
+        - id
+        - organizationId
+        - clubId
+        - name
+        - ruleType
+        - scopeType
+        - calculationType
+        - currency
+        - priority
+        - crossesMidnight
+        - isStackable
+        - isActive
+        - conditions
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        zoneId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Зона, если scopeType = ZONE.
+        resourceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Ресурс, если scopeType = RESOURCE.
+        name:
+          type: string
+          maxLength: 160
+          description: Административное имя правила.
+        ruleType:
+          $ref: '#/components/schemas/PricingRuleType'
+        scopeType:
+          $ref: '#/components/schemas/PricingRuleScope'
+        calculationType:
+          $ref: '#/components/schemas/PricingCalculationType'
+        amountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^-?\d+$
+          description: Сумма/ставка в минимальных единицах валюты (для FIXED_RATE и FIXED_ADJUSTMENT).
+          example: '150000'
+        percentageBasisPoints:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          description: Процент в базисных пунктах (для PERCENT_ADJUSTMENT); 2000 = 20 %.
+          example: 2000
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+        priority:
+          type: integer
+          format: int32
+          description: Приоритет при разрешении (больше = выше).
+          example: 10
+        daysOfWeek:
+          type:
+            - array
+            - 'null'
+          description: Applicable ISO-дни недели (1 = Пн ... 7 = Вс), пусто = каждый день.
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+          example:
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+        localStartTime:
+          type:
+            - string
+            - 'null'
+          description: Локальное время начала окна (HH:MM:SS), задаётся вместе с localEndTime.
+          example: '17:00:00'
+        localEndTime:
+          type:
+            - string
+            - 'null'
+          description: Локальное время окончания окна (HH:MM:SS).
+          example: '23:00:00'
+        crossesMidnight:
+          type: boolean
+          description: Окно времени пересекает границу суток.
+        validFrom:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время активации правила.
+        validUntil:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Время окончания действия; должно быть позже validFrom.
+        minimumDurationMinutes:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          description: Условие применимости (минимальная длительность брони).
+        maximumDurationMinutes:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          description: Условие применимости (максимальная длительность брони).
+        isStackable:
+          type: boolean
+          description: Правило можно комбинировать с другими.
+        isActive:
+          type: boolean
+          description: Операционная активация.
+        conditions:
+          type: object
+          description: Версионированные будущие условия; по умолчанию пустой объект.
+          default: {}
+        createdById:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Идентификатор создателя правила.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PricingRuleCreateRequest:
+      type: object
+      description: |
+        Создание правила тарификации. Валидация области действия: CLUB — без zone/resource, ZONE — обязательная zone без resource, RESOURCE — обязательный resource. Ровно одно значение расчёта (amountMinor или percentageBasisPoints) согласно calculationType.
+      required:
+        - name
+        - ruleType
+        - scopeType
+        - calculationType
+        - currency
+        - priority
+        - crossesMidnight
+        - isStackable
+        - isActive
+        - conditions
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        ruleType:
+          $ref: '#/components/schemas/PricingRuleType'
+        scopeType:
+          $ref: '#/components/schemas/PricingRuleScope'
+        zoneId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Обязательна при scopeType = ZONE.
+        resourceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Обязателен при scopeType = RESOURCE.
+        calculationType:
+          $ref: '#/components/schemas/PricingCalculationType'
+        amountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^-?\d+$
+          description: Для FIXED_RATE / FIXED_ADJUSTMENT. Для BASE неотрицательная ставка.
+          example: '150000'
+        percentageBasisPoints:
+          type:
+            - integer
+            - 'null'
+          format: int32
+          description: Для PERCENT_ADJUSTMENT; диапазон задаётся продуктом (обычно 0–10000).
+          example: 2000
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+        priority:
+          type: integer
+          format: int32
+          description: Приоритет при разрешении (больше = выше).
+          example: 10
+        daysOfWeek:
+          type:
+            - array
+            - 'null'
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+          example:
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+        localStartTime:
+          type:
+            - string
+            - 'null'
+          description: Локальное время начала окна (HH:MM:SS); задаётся вместе с localEndTime.
+          example: '17:00:00'
+        localEndTime:
+          type:
+            - string
+            - 'null'
+          description: Локальное время окончания окна (HH:MM:SS).
+          example: '23:00:00'
+        crossesMidnight:
+          type: boolean
+        validFrom:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        validUntil:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Должно быть позже validFrom.
+        minimumDurationMinutes:
+          type:
+            - integer
+            - 'null'
+          format: int32
+        maximumDurationMinutes:
+          type:
+            - integer
+            - 'null'
+          format: int32
+        isStackable:
+          type: boolean
+        isActive:
+          type: boolean
+        conditions:
+          type: object
+          description: Версионированные будущие условия; по умолчанию пустой объект.
+          default: {}
+    PricingRuleUpdateRequest:
+      type: object
+      description: |
+        Обновление правила тарификации. Передаются только изменяемые поля (partial). Применённые исторические цены не пересчитываются.
+      properties:
+        name:
+          type:
+            - string
+            - 'null'
+          maxLength: 160
+        calculationType:
+          $ref: '#/components/schemas/PricingCalculationType'
+        amountMinor:
+          type:
+            - string
+            - 'null'
+          pattern: ^-?\d+$
+        percentageBasisPoints:
+          type:
+            - integer
+            - 'null'
+          format: int32
+        currency:
+          type:
+            - string
+            - 'null'
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+        priority:
+          type:
+            - integer
+            - 'null'
+          format: int32
+        daysOfWeek:
+          type:
+            - array
+            - 'null'
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+        localStartTime:
+          type:
+            - string
+            - 'null'
+          description: Локальное время начала окна (HH:MM:SS); задаётся вместе с localEndTime.
+        localEndTime:
+          type:
+            - string
+            - 'null'
+          description: Локальное время окончания окна (HH:MM:SS).
+        crossesMidnight:
+          type: boolean
+        validFrom:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        validUntil:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        minimumDurationMinutes:
+          type:
+            - integer
+            - 'null'
+          format: int32
+        maximumDurationMinutes:
+          type:
+            - integer
+            - 'null'
+          format: int32
+        isStackable:
+          type: boolean
+        isActive:
+          type: boolean
+        conditions:
+          type:
+            - object
+            - 'null'
+          description: Версионированные будущие условия.
+    PriceQuote:
+      type: object
+      description: |
+        Расчёт цены (quote) для бронирования. Объяснимая структура цены; историческая цена брони после подтверждения не пересчитывается. Все суммы — строкой в минимальных единицах валюты.
+      required:
+        - quoteId
+        - currency
+        - baseAmountMinor
+        - discountAmountMinor
+        - totalAmountMinor
+        - appliedRules
+        - expiresAt
+      properties:
+        quoteId:
+          type: string
+          format: uuid
+          description: Идентификатор quote (может использоваться как Idempotency reference при создании брони).
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+        baseAmountMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Сумма до скидок.
+          example: '600000'
+        discountAmountMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Суммарная скидка (неотрицательная).
+          example: '60000'
+        totalAmountMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Итоговая сумма (base - discount).
+          example: '540000'
+        appliedRules:
+          type: array
+          description: Объяснимая последовательность применённых правил.
+          items:
+            $ref: '#/components/schemas/AppliedPriceRule'
+        expiresAt:
+          type: string
+          format: date-time
+          description: Время, после которого quote считается устаревшей.
+    PriceQuoteRequest:
+      type: object
+      description: |
+        Запрос расчёта цены (quote) для будущей брони. Аналогичен по форме `ReservationCreateRequest`, но не создаёт бронь и не резервирует ресурсы. Результат доступен ограниченное время (expiresAt).
+      required:
+        - clubId
+        - resourceIds
+        - startAt
+        - endAt
+      properties:
+        clubId:
+          type: string
+          format: uuid
+        resourceIds:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          description: Ресурсы брони (один VIP room либо компьютеры одной зоны/клуба).
+          items:
+            type: string
+            format: uuid
+          example:
+            - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+          description: Длительность в пределах min/max для применяемых правил.
+        participantCount:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Число участников (условие применимости правил).
+        discountCode:
+          type:
+            - string
+            - 'null'
+          maxLength: 64
+          description: Код промокода, если требуется учесть скидку в quote.
+    AppliedPriceRule:
+      type: object
+      description: |
+        Применённое правило в структуре цены (PriceQuote.appliedRules). Суммы — строкой в минимальных единицах валюты.
+      required:
+        - ruleId
+        - type
+        - amountMinor
+        - description
+      properties:
+        ruleId:
+          type: string
+          format: uuid
+          description: Идентификатор правила (или специальное значение для округления).
+        type:
+          type: string
+          enum:
+            - BASE_RATE
+            - PROMOTION
+            - ZONE_SURCHARGE
+            - HAPPY_HOUR
+            - SURCHARGE
+            - ROUNDING
+          description: Тип применённого правила.
+        amountMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Вклад строки в итог (скидки/округляющие строки могут быть отрицательными).
+          example: '150000'
+        description:
+          type: string
+          maxLength: 240
+          description: Объяснение строки.
   parameters:
     ReservationId:
       name: reservationId
@@ -14217,6 +15026,36 @@ components:
       schema:
         type: string
         format: date-time
+    PricingRuleId:
+      name: ruleId
+      in: path
+      required: true
+      description: Идентификатор правила тарификации (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+    PricingRuleTypeQuery:
+      name: ruleType
+      in: query
+      required: false
+      description: Фильтр по типу правила.
+      schema:
+        $ref: '#/components/schemas/PricingRuleType'
+    PricingRuleScopeQuery:
+      name: scopeType
+      in: query
+      required: false
+      description: Фильтр по области действия правила.
+      schema:
+        $ref: '#/components/schemas/PricingRuleScope'
+    PricingRuleActiveQuery:
+      name: isActive
+      in: query
+      required: false
+      description: Фильтр по операционной активации.
+      schema:
+        type: boolean
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -16201,6 +17040,151 @@ components:
           pageSize: 20
           total: 2
           hasNextPage: false
+    PriceQuoteRequestExample:
+      summary: Запрос расчёта цены для брони
+      value:
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        resourceIds:
+          - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        startAt: '2026-08-06T17:00:00Z'
+        endAt: '2026-08-06T21:00:00Z'
+        participantCount: 1
+        discountCode: VIPKZ10
+    PriceQuoteExample:
+      summary: Расчёт цены (quote)
+      value:
+        data:
+          quoteId: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+          currency: KZT
+          baseAmountMinor: '600000'
+          discountAmountMinor: '120000'
+          totalAmountMinor: '480000'
+          appliedRules:
+            - ruleId: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+              type: BASE_RATE
+              amountMinor: '600000'
+              description: Базовый тариф зоны Cybersport (1 500 тг/час x 4 ч)
+            - ruleId: e8f9a0b1-2d3e-4f4a-9b0c-1d2e3f4a5b6c
+              type: HAPPY_HOUR
+              amountMinor: '-120000'
+              description: Happy Hour 17:00–23:00 (будни), -20 %
+          expiresAt: '2026-08-06T17:00:00Z'
+        meta:
+          requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+          timestamp: '2026-08-05T12:00:00Z'
+    PricingRuleListExample:
+      summary: Список правил тарификации
+      value:
+        data:
+          - id: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+            name: Тариф зоны Cybersport
+            ruleType: BASE
+            scopeType: ZONE
+            calculationType: FIXED_RATE
+            amountMinor: '150000'
+            currency: KZT
+            priority: 10
+            daysOfWeek:
+              - 1
+              - 2
+              - 3
+              - 4
+              - 5
+              - 6
+              - 7
+            crossesMidnight: false
+            isStackable: true
+            isActive: true
+            conditions: {}
+            createdAt: '2026-05-10T08:00:00Z'
+            updatedAt: '2026-05-10T08:00:00Z'
+          - id: e8f9a0b1-2d3e-4f4a-9b0c-1d2e3f4a5b6c
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            name: Happy Hour будни
+            ruleType: HAPPY_HOUR
+            scopeType: CLUB
+            calculationType: PERCENT_ADJUSTMENT
+            percentageBasisPoints: -2000
+            currency: KZT
+            priority: 20
+            daysOfWeek:
+              - 1
+              - 2
+              - 3
+              - 4
+              - 5
+            localStartTime: '17:00:00'
+            localEndTime: '23:00:00'
+            crossesMidnight: false
+            isStackable: false
+            isActive: true
+            conditions: {}
+            createdAt: '2026-05-12T08:00:00Z'
+            updatedAt: '2026-05-12T08:00:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    PricingRuleCreateRequestExample:
+      summary: Создание правила (Happy Hour зоны)
+      value:
+        name: Happy Hour VIP-зона
+        ruleType: HAPPY_HOUR
+        scopeType: ZONE
+        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        calculationType: PERCENT_ADJUSTMENT
+        percentageBasisPoints: -2500
+        currency: KZT
+        priority: 20
+        daysOfWeek:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+        localStartTime: '17:00:00'
+        localEndTime: '23:00:00'
+        crossesMidnight: false
+        isStackable: false
+        isActive: true
+        conditions: {}
+    PricingRuleExample:
+      summary: Созданное правило тарификации
+      value:
+        data:
+          id: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+          name: Happy Hour VIP-зона
+          ruleType: HAPPY_HOUR
+          scopeType: ZONE
+          calculationType: PERCENT_ADJUSTMENT
+          percentageBasisPoints: -2500
+          currency: KZT
+          priority: 20
+          daysOfWeek:
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+          localStartTime: '17:00:00'
+          localEndTime: '23:00:00'
+          crossesMidnight: false
+          isStackable: false
+          isActive: true
+          conditions: {}
+          createdAt: '2026-08-05T12:00:00Z'
+          updatedAt: '2026-08-05T12:00:00Z'
+        meta:
+          requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+          timestamp: '2026-08-05T12:00:00Z'
     WalkInReservationRequestExample:
       summary: Тело walk-in брони (гость без аккаунта)
       value:

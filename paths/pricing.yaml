@@ -1,0 +1,255 @@
+# =====================================================================
+# Visora API — Paths модуля Pricing (rate cards + quote)
+# =====================================================================
+
+'/organizations/{organizationId}/clubs/{clubId}/pricing/quote':
+  post:
+    tags:
+      - pricing
+    summary: Рассчитать цену брони (quote)
+    operationId: createPriceQuote
+    description: |-
+      Вычисляет объяснимую цену (quote) для будущего бронирования, не создавая и не резервируя ресурсы. Используется на шаге предпросмотра брони.
+
+      **Правила разрешения тарифов (спека 4.5):**
+      1. override ресурса → правило ресурса → зона/тип → дефолт клуба;
+      2. после базовой цены применяются применимые скидки (happy-hour / промокод);
+      3. связи разрешаются по специфичности, затем `priority`, затем стабильному `ruleId`;
+      4. один и тот же resolver версия даёт одинаковую цену для одного входа.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/PriceQuoteRequest.yaml'
+          examples:
+            quote:
+              $ref: '../components/examples.yaml#/PriceQuoteRequestExample'
+    responses:
+      '200':
+        description: Расчёт цены.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PriceQuote.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              quote:
+                $ref: '../components/examples.yaml#/PriceQuoteExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/pricing-rules':
+  get:
+    tags:
+      - pricing-admin
+    summary: Список правил тарификации
+    operationId: listPricingRules
+    description: |
+      Правила тарификации (`pricing_rules`) клуба с фильтрами по типу, области действия и активации. Применённые исторические цены не зависят от изменений правил.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/PricingRuleTypeQuery'
+      - $ref: '../components/parameters.yaml#/PricingRuleScopeQuery'
+      - $ref: '../components/parameters.yaml#/PricingRuleActiveQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Список правил.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/PricingRule.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              rules:
+                $ref: '../components/examples.yaml#/PricingRuleListExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+  post:
+    tags:
+      - pricing-admin
+    summary: Создать правило тарификации
+    operationId: createPricingRule
+    description: |
+      Создаёт правило тарификации. Проверка согласованности области действия: CLUB — без zone/resource; ZONE — обязательная zone без resource; RESOURCE — обязательный resource. Ровно одно значение расчёта согласно calculationType.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/PricingRuleCreateRequest.yaml'
+          examples:
+            create:
+              $ref: '../components/examples.yaml#/PricingRuleCreateRequestExample'
+    responses:
+      '201':
+        description: Правило создано.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PricingRule.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/PricingRuleExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/pricing-rules/{ruleId}':
+  get:
+    tags:
+      - pricing-admin
+    summary: Правило тарификации по id
+    operationId: getPricingRule
+    description: Детали правила тарификации.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/PricingRuleId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Правило.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PricingRule.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+  put:
+    tags:
+      - pricing-admin
+    summary: Обновить правило тарификации
+    operationId: updatePricingRule
+    description: |
+      Частичное обновление правила. Изменения не пересчитывают уже подтверждённые брони — применённые цены фиксируются в неизменяемых компонентах.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/PricingRuleId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/PricingRuleUpdateRequest.yaml'
+    responses:
+      '200':
+        description: Правило обновлено.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/PricingRule.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+  delete:
+    tags:
+      - pricing-admin
+    summary: Удалить правило тарификации
+    operationId: deletePricingRule
+    description: |
+      Мягкое удаление правила (soft-delete). Удалённое правило не применяется к новым quote; исторические компоненты цены сохраняют ссылку на правило.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/PricingRuleId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Правило мягко удалено.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'

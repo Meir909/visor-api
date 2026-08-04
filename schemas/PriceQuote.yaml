@@ -1,0 +1,46 @@
+type: object
+description: |
+  Расчёт цены (quote) для бронирования. Объяснимая структура цены; историческая цена брони после подтверждения не пересчитывается. Все суммы — строкой в минимальных единицах валюты.
+required:
+  - quoteId
+  - currency
+  - baseAmountMinor
+  - discountAmountMinor
+  - totalAmountMinor
+  - appliedRules
+  - expiresAt
+properties:
+  quoteId:
+    type: string
+    format: uuid
+    description: Идентификатор quote (может использоваться как Idempotency reference при создании брони).
+  currency:
+    type: string
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT
+  baseAmountMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Сумма до скидок.
+    example: '600000'
+  discountAmountMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Суммарная скидка (неотрицательная).
+    example: '60000'
+  totalAmountMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Итоговая сумма (base - discount).
+    example: '540000'
+  appliedRules:
+    type: array
+    description: Объяснимая последовательность применённых правил.
+    items:
+      $ref: '../schemas/AppliedPriceRule.yaml'
+  expiresAt:
+    type: string
+    format: date-time
+    description: Время, после которого quote считается устаревшей.

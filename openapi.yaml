@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов). Остальные модули (Pricing, Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle), **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба), **Computers** (инвентарь ресурсов, операционный статус, подключения к Provider и привязки), **Layout** (публикация карты клуба, версии планировки, зоны), **Analytics** (дашборды: выручка, загрузка, конверсия, топ ресурсов, пиковые часы), **Admin** (сотрудник клуба: промо/скидки, купоны, walk-in брони) и **Owner** (сетевые read models владельца: дашборд, сеть клубов, сотрудники, рекомендации) и **PlatformAdmin** (суперадмин: платформенные роли `SUPER_ADMIN`, cross-tenant организации, глобальная статистика, аудит-лог, поиск пользователей), **Provider** (inbound webhook событий, inbox `provider_events`, снапшоты состояний ресурсов) и **Pricing** (rate card `pricing_rules` и explainable-расчёт цены quote). Остальные модули (Notifications) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -865,7 +865,47 @@ tags:
 
       **Ошибки:** `PROVIDER_SIGNATURE_INVALID`, `INVALID_PROVIDER_EVENT`, `PROVIDER_EVENT_NOT_FOUND`, `PROVIDER_CONNECTION_NOT_ACTIVE`, `PROVIDER_STATE_STALE`.
 
+  - name: pricing
+    description: |-
+      # Pricing (тарифы и расчёт цены)
+
+      Расчёт explainable-цены (quote) для бронирования и управление rate card (`pricing_rules`). Промокоды/скидки — в модуле Admin (`admin-promotions`); здесь — базовая тарификация и предпросмотр цены.
+
+      ## Расчёт цены (quote)
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant P as Client
+          participant Q as POST /pricing/quote
+          participant E as PricingEngine
+          P->>Q: interval + ресурсы + (promo)
+          Q->>E: разрешение правил
+          E->>Q: PriceQuote (appliedRules)
+          Q-->>P: quote (expiresAt)
+      ```
+
+      **Порядок разрешения тарифов (спека 4.5):**
+      1. override ресурса → правило ресурса → зона/тип → дефолт клуба;
+      2. применимые скидки (happy-hour / промокод) после базовой цены;
+      3. связи разрешаются по специфичности, затем `priority`, затем стабильному `ruleId`;
+      4. детерминизм: одна версия resolver → одинаковая цена для одного входа.
+
+      Историческая цена брони не пересчитывается при изменении правил; применённые правила фиксируются в неизменяемых компонентах цены.
+
+      **Ошибки:** `PRICING_RULE_NOT_FOUND`, `PRICING_SCOPE_MISMATCH`, `PRICING_INVALID_PERIOD`, `PRICING_NO_BASE_RATE`, `PRICING_QUOTE_EXPIRED`, `PRICING_DURATION_NOT_ELIGIBLE`.
+
+  - name: pricing-admin
+    description: |-
+      Управление правилами тарификации клуба (`pricing_rules`): список, создание, обновление, мягкое удаление. Доступно сотрудникам/владельцу с правом `pricing.promotion`.
+
 paths:
+  '/organizations/{organizationId}/clubs/{clubId}/pricing/quote':
+    $ref: './paths/pricing.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1pricing~1quote'
+  '/organizations/{organizationId}/clubs/{clubId}/pricing-rules':
+    $ref: './paths/pricing.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1pricing-rules'
+  '/organizations/{organizationId}/clubs/{clubId}/pricing-rules/{ruleId}':
+    $ref: './paths/pricing.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1pricing-rules~1{ruleId}'
   '/webhooks/provider/{connectionId}/events':
     $ref: './paths/provider.yaml#/~1webhooks~1provider~1{connectionId}~1events'
   '/organizations/{organizationId}/clubs/{clubId}/provider-connections/{connectionId}/events':
@@ -1410,6 +1450,24 @@ components:
       $ref: './schemas/ProviderStateFreshness.yaml'
     ProviderResourceStateSnapshot:
       $ref: './schemas/ProviderResourceStateSnapshot.yaml'
+    PricingRuleType:
+      $ref: './schemas/PricingRuleType.yaml'
+    PricingRuleScope:
+      $ref: './schemas/PricingRuleScope.yaml'
+    PricingCalculationType:
+      $ref: './schemas/PricingCalculationType.yaml'
+    PricingRule:
+      $ref: './schemas/PricingRule.yaml'
+    PricingRuleCreateRequest:
+      $ref: './schemas/PricingRuleCreateRequest.yaml'
+    PricingRuleUpdateRequest:
+      $ref: './schemas/PricingRuleUpdateRequest.yaml'
+    PriceQuote:
+      $ref: './schemas/PriceQuote.yaml'
+    PriceQuoteRequest:
+      $ref: './schemas/PriceQuoteRequest.yaml'
+    AppliedPriceRule:
+      $ref: './schemas/AppliedPriceRule.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -1547,6 +1605,14 @@ components:
       $ref: './components/parameters.yaml#/ProviderEventReceivedFrom'
     ProviderEventReceivedTo:
       $ref: './components/parameters.yaml#/ProviderEventReceivedTo'
+    PricingRuleId:
+      $ref: './components/parameters.yaml#/PricingRuleId'
+    PricingRuleTypeQuery:
+      $ref: './components/parameters.yaml#/PricingRuleTypeQuery'
+    PricingRuleScopeQuery:
+      $ref: './components/parameters.yaml#/PricingRuleScopeQuery'
+    PricingRuleActiveQuery:
+      $ref: './components/parameters.yaml#/PricingRuleActiveQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -1699,3 +1765,13 @@ components:
       $ref: './components/examples.yaml#/ProviderEventListExample'
     ProviderResourceStateListExample:
       $ref: './components/examples.yaml#/ProviderResourceStateListExample'
+    PriceQuoteRequestExample:
+      $ref: './components/examples.yaml#/PriceQuoteRequestExample'
+    PriceQuoteExample:
+      $ref: './components/examples.yaml#/PriceQuoteExample'
+    PricingRuleListExample:
+      $ref: './components/examples.yaml#/PricingRuleListExample'
+    PricingRuleCreateRequestExample:
+      $ref: './components/examples.yaml#/PricingRuleCreateRequestExample'
+    PricingRuleExample:
+      $ref: './components/examples.yaml#/PricingRuleExample'

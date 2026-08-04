@@ -1,0 +1,10 @@
+type: string
+description: Область применения правила тарификации.
+enum:
+  - CLUB
+  - ZONE
+  - RESOURCE
+x-enum-descriptions:
+  CLUB: Правило действует на весь клуб (без zone/resource).
+  ZONE: Правило действует на зону клуба.
+  RESOURCE: Правило действует на конкретный ресурс (компьютер/VIP-комнату).

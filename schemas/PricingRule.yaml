@@ -1,0 +1,147 @@
+type: object
+description: |
+  Правило тарификации (`pricing_rules`). Версионировано, гибко по области действия (клуб/зона/ресурс), happy-hour окнам и будущим динамическим правилам. Безопасно изменяется/удаляется (soft), так как применённые правила фиксируются в неизменяемых компонентах цены брони.
+required:
+  - id
+  - organizationId
+  - clubId
+  - name
+  - ruleType
+  - scopeType
+  - calculationType
+  - currency
+  - priority
+  - crossesMidnight
+  - isStackable
+  - isActive
+  - conditions
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  organizationId:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  zoneId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Зона, если scopeType = ZONE.'
+  resourceId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Ресурс, если scopeType = RESOURCE.'
+  name:
+    type: string
+    maxLength: 160
+    description: Административное имя правила.
+  ruleType:
+    $ref: '../schemas/PricingRuleType.yaml'
+  scopeType:
+    $ref: '../schemas/PricingRuleScope.yaml'
+  calculationType:
+    $ref: '../schemas/PricingCalculationType.yaml'
+  amountMinor:
+    type:
+      - string
+      - 'null'
+    pattern: '^-?\d+$'
+    description: 'Сумма/ставка в минимальных единицах валюты (для FIXED_RATE и FIXED_ADJUSTMENT).'
+    example: '150000'
+  percentageBasisPoints:
+    type:
+      - integer
+      - 'null'
+    format: int32
+    description: 'Процент в базисных пунктах (для PERCENT_ADJUSTMENT); 2000 = 20 %.'
+    example: 2000
+  currency:
+    type: string
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT
+  priority:
+    type: integer
+    format: int32
+    description: Приоритет при разрешении (больше = выше).
+    example: 10
+  daysOfWeek:
+    type:
+      - array
+      - 'null'
+    description: Applicable ISO-дни недели (1 = Пн ... 7 = Вс), пусто = каждый день.
+    items:
+      type: integer
+      minimum: 1
+      maximum: 7
+    example: [1, 2, 3, 4, 5]
+  localStartTime:
+    type:
+      - string
+      - 'null'
+    description: 'Локальное время начала окна (HH:MM:SS), задаётся вместе с localEndTime.'
+    example: '17:00:00'
+  localEndTime:
+    type:
+      - string
+      - 'null'
+    description: 'Локальное время окончания окна (HH:MM:SS).'
+    example: '23:00:00'
+  crossesMidnight:
+    type: boolean
+    description: Окно времени пересекает границу суток.
+  validFrom:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Время активации правила.
+  validUntil:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Время окончания действия; должно быть позже validFrom.
+  minimumDurationMinutes:
+    type:
+      - integer
+      - 'null'
+    format: int32
+    description: Условие применимости (минимальная длительность брони).
+  maximumDurationMinutes:
+    type:
+      - integer
+      - 'null'
+    format: int32
+    description: Условие применимости (максимальная длительность брони).
+  isStackable:
+    type: boolean
+    description: Правило можно комбинировать с другими.
+  isActive:
+    type: boolean
+    description: Операционная активация.
+  conditions:
+    type: object
+    description: Версионированные будущие условия; по умолчанию пустой объект.
+    default: {}
+  createdById:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Идентификатор создателя правила.'
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

@@ -1,0 +1,10 @@
+type: string
+description: Способ расчёта правила тарификации. Для каждого правила задаётся ровно одно значение расчёта.
+enum:
+  - FIXED_RATE
+  - FIXED_ADJUSTMENT
+  - PERCENT_ADJUSTMENT
+x-enum-descriptions:
+  FIXED_RATE: Фиксированная ставка (amountMinor; обычно BASE).
+  FIXED_ADJUSTMENT: Фиксированная надбавка/скидка в сумме (amountMinor).
+  PERCENT_ADJUSTMENT: Процентная надбавка/скидка (percentageBasisPoints; 2000 = 20 %).

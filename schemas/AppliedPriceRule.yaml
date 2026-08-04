@@ -1,0 +1,32 @@
+type: object
+description: |
+  Применённое правило в структуре цены (PriceQuote.appliedRules). Суммы — строкой в минимальных единицах валюты.
+required:
+  - ruleId
+  - type
+  - amountMinor
+  - description
+properties:
+  ruleId:
+    type: string
+    format: uuid
+    description: Идентификатор правила (или специальное значение для округления).
+  type:
+    type: string
+    enum:
+      - BASE_RATE
+      - PROMOTION
+      - ZONE_SURCHARGE
+      - HAPPY_HOUR
+      - SURCHARGE
+      - ROUNDING
+    description: Тип применённого правила.
+  amountMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Вклад строки в итог (скидки/округляющие строки могут быть отрицательными).
+    example: '150000'
+  description:
+    type: string
+    maxLength: 240
+    description: Объяснение строки.

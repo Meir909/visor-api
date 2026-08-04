@@ -1948,3 +1948,131 @@ ProviderResourceStateListExample:
       pageSize: 20
       total: 2
       hasNextPage: false
+
+PriceQuoteRequestExample:
+  summary: Запрос расчёта цены для брони
+  value:
+    clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+    resourceIds:
+      - 3fa85f64-5717-4562-b3fc-2c963f66afa6
+    startAt: '2026-08-06T17:00:00Z'
+    endAt: '2026-08-06T21:00:00Z'
+    participantCount: 1
+    discountCode: 'VIPKZ10'
+
+PriceQuoteExample:
+  summary: Расчёт цены (quote)
+  value:
+    data:
+      quoteId: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+      currency: KZT
+      baseAmountMinor: '600000'
+      discountAmountMinor: '120000'
+      totalAmountMinor: '480000'
+      appliedRules:
+        - ruleId: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+          type: BASE_RATE
+          amountMinor: '600000'
+          description: Базовый тариф зоны Cybersport (1 500 тг/час x 4 ч)
+        - ruleId: e8f9a0b1-2d3e-4f4a-9b0c-1d2e3f4a5b6c
+          type: HAPPY_HOUR
+          amountMinor: '-120000'
+          description: Happy Hour 17:00–23:00 (будни), -20 %
+      expiresAt: '2026-08-06T17:00:00Z'
+    meta:
+      requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+      timestamp: '2026-08-05T12:00:00Z'
+
+PricingRuleListExample:
+  summary: Список правил тарификации
+  value:
+    data:
+      - id: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+        name: Тариф зоны Cybersport
+        ruleType: BASE
+        scopeType: ZONE
+        calculationType: FIXED_RATE
+        amountMinor: '150000'
+        currency: KZT
+        priority: 10
+        daysOfWeek: [1, 2, 3, 4, 5, 6, 7]
+        crossesMidnight: false
+        isStackable: true
+        isActive: true
+        conditions: {}
+        createdAt: '2026-05-10T08:00:00Z'
+        updatedAt: '2026-05-10T08:00:00Z'
+      - id: e8f9a0b1-2d3e-4f4a-9b0c-1d2e3f4a5b6c
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        name: Happy Hour будни
+        ruleType: HAPPY_HOUR
+        scopeType: CLUB
+        calculationType: PERCENT_ADJUSTMENT
+        percentageBasisPoints: -2000
+        currency: KZT
+        priority: 20
+        daysOfWeek: [1, 2, 3, 4, 5]
+        localStartTime: '17:00:00'
+        localEndTime: '23:00:00'
+        crossesMidnight: false
+        isStackable: false
+        isActive: true
+        conditions: {}
+        createdAt: '2026-05-12T08:00:00Z'
+        updatedAt: '2026-05-12T08:00:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+PricingRuleCreateRequestExample:
+  summary: Создание правила (Happy Hour зоны)
+  value:
+    name: Happy Hour VIP-зона
+    ruleType: HAPPY_HOUR
+    scopeType: ZONE
+    zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+    calculationType: PERCENT_ADJUSTMENT
+    percentageBasisPoints: -2500
+    currency: KZT
+    priority: 20
+    daysOfWeek: [1, 2, 3, 4, 5]
+    localStartTime: '17:00:00'
+    localEndTime: '23:00:00'
+    crossesMidnight: false
+    isStackable: false
+    isActive: true
+    conditions: {}
+
+PricingRuleExample:
+  summary: Созданное правило тарификации
+  value:
+    data:
+      id: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+      zoneId: 9d1f4e7a-2c3b-4a5e-8f6d-7a8b9c0d1e2f
+      name: Happy Hour VIP-зона
+      ruleType: HAPPY_HOUR
+      scopeType: ZONE
+      calculationType: PERCENT_ADJUSTMENT
+      percentageBasisPoints: -2500
+      currency: KZT
+      priority: 20
+      daysOfWeek: [1, 2, 3, 4, 5]
+      localStartTime: '17:00:00'
+      localEndTime: '23:00:00'
+      crossesMidnight: false
+      isStackable: false
+      isActive: true
+      conditions: {}
+      createdAt: '2026-08-05T12:00:00Z'
+      updatedAt: '2026-08-05T12:00:00Z'
+    meta:
+      requestId: 8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c
+      timestamp: '2026-08-05T12:00:00Z'

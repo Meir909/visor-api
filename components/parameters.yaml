@@ -469,6 +469,40 @@ ProviderEventReceivedTo:
     type: string
     format: date-time
 
+PricingRuleId:
+  name: ruleId
+  in: path
+  required: true
+  description: Идентификатор правила тарификации (UUID).
+  schema:
+    type: string
+    format: uuid
+  example: e7f8a9b0-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+
+PricingRuleTypeQuery:
+  name: ruleType
+  in: query
+  required: false
+  description: Фильтр по типу правила.
+  schema:
+    $ref: '../schemas/PricingRuleType.yaml'
+
+PricingRuleScopeQuery:
+  name: scopeType
+  in: query
+  required: false
+  description: Фильтр по области действия правила.
+  schema:
+    $ref: '../schemas/PricingRuleScope.yaml'
+
+PricingRuleActiveQuery:
+  name: isActive
+  in: query
+  required: false
+  description: Фильтр по операционной активации.
+  schema:
+    type: boolean
+
 ZoneQuery:
   name: zoneId
   in: query

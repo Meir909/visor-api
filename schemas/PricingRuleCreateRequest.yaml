@@ -1,0 +1,113 @@
+type: object
+description: |
+  Создание правила тарификации. Валидация области действия: CLUB — без zone/resource, ZONE — обязательная zone без resource, RESOURCE — обязательный resource. Ровно одно значение расчёта (amountMinor или percentageBasisPoints) согласно calculationType.
+required:
+  - name
+  - ruleType
+  - scopeType
+  - calculationType
+  - currency
+  - priority
+  - crossesMidnight
+  - isStackable
+  - isActive
+  - conditions
+properties:
+  name:
+    type: string
+    maxLength: 160
+  ruleType:
+    $ref: '../schemas/PricingRuleType.yaml'
+  scopeType:
+    $ref: '../schemas/PricingRuleScope.yaml'
+  zoneId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Обязательна при scopeType = ZONE.'
+  resourceId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: 'Обязателен при scopeType = RESOURCE.'
+  calculationType:
+    $ref: '../schemas/PricingCalculationType.yaml'
+  amountMinor:
+    type:
+      - string
+      - 'null'
+    pattern: '^-?\d+$'
+    description: 'Для FIXED_RATE / FIXED_ADJUSTMENT. Для BASE неотрицательная ставка.'
+    example: '150000'
+  percentageBasisPoints:
+    type:
+      - integer
+      - 'null'
+    format: int32
+    description: 'Для PERCENT_ADJUSTMENT; диапазон задаётся продуктом (обычно 0–10000).'
+    example: 2000
+  currency:
+    type: string
+    minLength: 3
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT
+  priority:
+    type: integer
+    format: int32
+    description: Приоритет при разрешении (больше = выше).
+    example: 10
+  daysOfWeek:
+    type:
+      - array
+      - 'null'
+    items:
+      type: integer
+      minimum: 1
+      maximum: 7
+    example: [1, 2, 3, 4, 5]
+  localStartTime:
+    type:
+      - string
+      - 'null'
+    description: 'Локальное время начала окна (HH:MM:SS); задаётся вместе с localEndTime.'
+    example: '17:00:00'
+  localEndTime:
+    type:
+      - string
+      - 'null'
+    description: 'Локальное время окончания окна (HH:MM:SS).'
+    example: '23:00:00'
+  crossesMidnight:
+    type: boolean
+  validFrom:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  validUntil:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Должно быть позже validFrom.
+  minimumDurationMinutes:
+    type:
+      - integer
+      - 'null'
+    format: int32
+  maximumDurationMinutes:
+    type:
+      - integer
+      - 'null'
+    format: int32
+  isStackable:
+    type: boolean
+  isActive:
+    type: boolean
+  conditions:
+    type: object
+    description: Версионированные будущие условия; по умолчанию пустой объект.
+    default: {}
