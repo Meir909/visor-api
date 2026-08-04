@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок) и **Organizations** (tenant lifecycle). Остальные модули (Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle) и **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба). Остальные модули (Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -473,7 +473,119 @@ tags:
       | Читать организацию | member организации (`membership` ACTIVE) |
       | Обновить, suspend, close | `organization.manage` (ORG_OWNER) |
 
+  - name: clubs
+    description: |-
+      # Клубы (Player / Public)
+
+      Публичный каталог клубов, карточка клуба, рабочее расписание и ближайшие перекрытия. Доступны только клубы со статусом `ACTIVE`.
+
+      **Жизненный цикл клуба:**
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> DRAFT: create (клуб организации)
+          DRAFT --> ACTIVE: publish (layout + resources + hours)
+          ACTIVE --> MAINTENANCE: maintenance (причина, аудит)
+          MAINTENANCE --> ACTIVE: reopen
+          ACTIVE --> CLOSED: close (soft-delete, необратимо)
+          MAINTENANCE --> CLOSED: close
+          DRAFT --> [*]: delete (черновик)
+          CLOSED --> [*]
+      ```
+
+      **Правила:**
+      - Клуб создаётся в `DRAFT` и невидим в каталоге до публикации.
+      - Публикация требует layout, хотя бы одного ресурса и заполненного расписания → иначе `422 CLUB_NOT_PUBLISHED`.
+      - `MAINTENANCE` скрывает клуб из каталога и блокирует новые брони (`CLUB_MAINTENANCE`).
+      - Перекрытия расписания (закрытия/специальные часы) приоритетнее недельного расписания.
+
+      ## Последовательность публикации
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant O as Owner (Next.js)
+          participant API as Visora API
+          participant SVC as Club Service
+          participant DB as PostgreSQL
+
+          O->>API: POST /api/v1/organizations/{orgId}/clubs
+          API->>SVC: CreateClubCommand (DRAFT)
+          SVC->>SVC: validate slug unique in org
+          SVC->>DB: INSERT club (DRAFT)
+          API-->>O: 201 Created
+          O->>API: PUT .../clubs/{clubId}/working-hours
+          O->>API: POST .../clubs/{clubId}/publish
+          SVC->>SVC: check layout + resources + hours
+          SVC->>DB: DRAFT → ACTIVE + outbox
+          API-->>O: 200 Club (ACTIVE)
+      ```
+
+      ## Разрешения
+
+      | Действие | Permission / роль |
+      |---|---|
+      | Смотреть каталог/карточку | `clubs.read.public` (аутентифицированный) |
+      | Создать, обновить, publish, close | `club.manage` (ORG_OWNER, CLUB_ADMIN клуба) |
+      | Управлять расписанием и закрытиями | `club.manage` |
+
+  - name: clubs-admin
+    description: |-
+      # Клубы (Admin / Owner)
+
+      Управление клубами организации: создание, карточка, политика бронирования, недельное расписание, временные перекрытия и жизненный цикл.
+
+      **Разрешения:** `club.manage` — ORG_OWNER (все клубы) и CLUB_ADMIN (только назначенные clubId).
+
+      ## Пересечение перекрытия с бронями
+
+      ```mermaid
+      flowchart TD
+          C[POST .../closures] --> V{Перекрытие пересекает<br/>активные брони?}
+          V -- Да --> F[409 CLOSURE_CONFLICT]
+          V -- Нет --> A[201 Created<br/>+ MAINTENANCE при isClosed + MAINTENANCE]
+      ```
+
+      ## Проверка публикации
+
+      ```mermaid
+      flowchart TD
+          P[POST .../publish] --> L{Layout настроен?}
+          L -- No --> R1[422 CLUB_NOT_PUBLISHED]
+          L -- Yes --> R2{Есть ресурсы?}
+          R2 -- No --> R1
+          R2 -- Yes --> H{Расписание заполнено?}
+          H -- No --> R1
+          H -- Yes --> OK[DRAFT → ACTIVE + outbox]
+      ```
+
 paths:
+  '/clubs':
+    $ref: './paths/clubs.yaml#/~1clubs'
+  '/clubs/{clubId}':
+    $ref: './paths/clubs.yaml#/~1clubs~1{clubId}'
+  '/clubs/{clubId}/hours':
+    $ref: './paths/clubs.yaml#/~1clubs~1{clubId}~1hours'
+  '/clubs/{clubId}/closures':
+    $ref: './paths/clubs.yaml#/~1clubs~1{clubId}~1closures'
+  '/organizations/{organizationId}/clubs':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs'
+  '/organizations/{organizationId}/clubs/{clubId}':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}'
+  '/organizations/{organizationId}/clubs/{clubId}/working-hours':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1working-hours'
+  '/organizations/{organizationId}/clubs/{clubId}/closures':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1closures'
+  '/organizations/{organizationId}/clubs/{clubId}/closures/{closureId}':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1closures~1{closureId}'
+  '/organizations/{organizationId}/clubs/{clubId}/publish':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1publish'
+  '/organizations/{organizationId}/clubs/{clubId}/maintenance':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1maintenance'
+  '/organizations/{organizationId}/clubs/{clubId}/reopen':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1reopen'
+  '/organizations/{organizationId}/clubs/{clubId}/close':
+    $ref: './paths/clubs.yaml#/~1organizations~1{organizationId}~1clubs~1{clubId}~1close'
   '/organizations':
     $ref: './paths/organizations.yaml#/~1organizations'
   '/organizations/slug-availability':
@@ -710,6 +822,28 @@ components:
       $ref: './schemas/OrganizationActionRequest.yaml'
     SlugAvailability:
       $ref: './schemas/SlugAvailability.yaml'
+    ClubStatus:
+      $ref: './schemas/ClubStatus.yaml'
+    Club:
+      $ref: './schemas/Club.yaml'
+    ClubSummary:
+      $ref: './schemas/ClubSummary.yaml'
+    ClubCreateRequest:
+      $ref: './schemas/ClubCreateRequest.yaml'
+    ClubUpdateRequest:
+      $ref: './schemas/ClubUpdateRequest.yaml'
+    WorkingHoursEntry:
+      $ref: './schemas/WorkingHoursEntry.yaml'
+    WorkingHoursUpdateRequest:
+      $ref: './schemas/WorkingHoursUpdateRequest.yaml'
+    ClosureType:
+      $ref: './schemas/ClosureType.yaml'
+    ClubClosure:
+      $ref: './schemas/ClubClosure.yaml'
+    ClubClosureCreateRequest:
+      $ref: './schemas/ClubClosureCreateRequest.yaml'
+    ClubActionRequest:
+      $ref: './schemas/ClubActionRequest.yaml'
   parameters:
     ReservationId:
       $ref: './components/parameters.yaml#/ReservationId'
@@ -771,6 +905,18 @@ components:
       $ref: './components/parameters.yaml#/ReasonQuery'
     SlugQuery:
       $ref: './components/parameters.yaml#/SlugQuery'
+    ClubId:
+      $ref: './components/parameters.yaml#/ClubId'
+    ClosureId:
+      $ref: './components/parameters.yaml#/ClosureId'
+    ClubStatusQuery:
+      $ref: './components/parameters.yaml#/ClubStatusQuery'
+    ClosureTypeQuery:
+      $ref: './components/parameters.yaml#/ClosureTypeQuery'
+    CityQuery:
+      $ref: './components/parameters.yaml#/CityQuery'
+    CountryCodeQuery:
+      $ref: './components/parameters.yaml#/CountryCodeQuery'
   responses:
     BadRequest:
       $ref: './components/responses.yaml#/BadRequest'
@@ -837,3 +983,15 @@ components:
       $ref: './components/examples.yaml#/SettingsExample'
     SlugAvailabilityExample:
       $ref: './components/examples.yaml#/SlugAvailabilityExample'
+    ClubSummaryExample:
+      $ref: './components/examples.yaml#/ClubSummaryExample'
+    ClubPublicExample:
+      $ref: './components/examples.yaml#/ClubPublicExample'
+    ClubDetailExample:
+      $ref: './components/examples.yaml#/ClubDetailExample'
+    ClubCreateExample:
+      $ref: './components/examples.yaml#/ClubCreateExample'
+    WorkingHoursExample:
+      $ref: './components/examples.yaml#/WorkingHoursExample'
+    ClosureExample:
+      $ref: './components/examples.yaml#/ClosureExample'

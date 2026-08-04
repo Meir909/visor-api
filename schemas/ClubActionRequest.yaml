@@ -1,0 +1,13 @@
+type: object
+description: Действие жизненного цикла клуба (publish/maintenance/reopen/close). Для maintenance/close требуется причина.
+required:
+  - reason
+properties:
+  reason:
+    type: string
+    maxLength: 240
+    description: Причина действия; аудируется.
+  expectedEndAt:
+    type: [string, 'null']
+    format: date-time
+    description: Ожидаемое завершение (для `MAINTENANCE`); необязательно.

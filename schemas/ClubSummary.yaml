@@ -1,0 +1,53 @@
+type: object
+description: Краткая публичная карточка клуба для каталога (только ACTIVE).
+required:
+  - id
+  - name
+  - slug
+  - city
+  - countryCode
+  - timezone
+  - currency
+  - defaultPriceMinor
+  - addressLine
+  - status
+properties:
+  id:
+    type: string
+    format: uuid
+  organizationId:
+    type: string
+    format: uuid
+  name:
+    type: string
+    maxLength: 160
+  slug:
+    type: string
+    maxLength: 120
+  description:
+    type: [string, 'null']
+  city:
+    type: string
+    maxLength: 120
+  countryCode:
+    type: string
+    maxLength: 2
+  timezone:
+    type: string
+    maxLength: 64
+  currency:
+    type: string
+    maxLength: 3
+  defaultPriceMinor:
+    type: string
+    pattern: '^-?\d+$'
+    description: Базовая почасовая цена в minor units.
+  addressLine:
+    type: string
+    maxLength: 300
+  status:
+    $ref: './ClubStatus.yaml'
+  opensTodayAtLocal:
+    type: [string, 'null']
+    pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$'
+    description: Время открытия сегодня (локальное) для витрины.

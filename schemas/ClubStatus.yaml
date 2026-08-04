@@ -1,0 +1,8 @@
+type: string
+description: Статус клуба. `DRAFT` не публикуется; `ACTIVE` доступен игрокам; `MAINTENANCE` блокирует новые брони; `CLOSED` — soft-delete.
+enum:
+  - DRAFT
+  - ACTIVE
+  - MAINTENANCE
+  - CLOSED
+example: ACTIVE

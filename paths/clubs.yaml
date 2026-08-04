@@ -1,0 +1,859 @@
+# =====================================================================
+# Visora API — Paths модуля Clubs (каталог + клуб + расписание + закрытия)
+# =====================================================================
+
+'/clubs':
+  get:
+    tags:
+      - clubs
+    summary: Публичный каталог клубов
+    operationId: listClubs
+    description: |-
+      Публичный поиск клубов. Возвращаются только `ACTIVE` клубы. Для игрока доступно без авторизации (витрина); фильтры по городу и стране.
+
+      **Правила:**
+      - Сортировка: по городу, затем по `name` (asc).
+      - `ACTIVE` + открыт сейчас — вверху списка (опционально `sortBy=popularity`).
+    parameters:
+      - $ref: '../components/parameters.yaml#/CityQuery'
+      - $ref: '../components/parameters.yaml#/CountryCodeQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Список клубов.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ClubSummary.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              catalog:
+                $ref: '../components/examples.yaml#/ClubSummaryExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+
+'/clubs/{clubId}':
+  get:
+    tags:
+      - clubs
+    summary: Публичная карточка клуба
+    operationId: getPublicClub
+    description: |
+      Публичная карточка `ACTIVE` клуба: адрес, координаты, валюта, базовая цена, сегодняшнее окно работы. Политика бронирования не раскрывается.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Карточка клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubSummary.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              club:
+                $ref: '../components/examples.yaml#/ClubPublicExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/clubs/{clubId}/hours':
+  get:
+    tags:
+      - clubs
+    summary: Рабочие часы клуба (публично)
+    operationId: getPublicClubHours
+    description: |
+      Недельное расписание клуба и активные перекрытия (приоритетнее расписания). Используется витриной и мобильным приложением.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Расписание и перекрытия.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: object
+                  properties:
+                    timezone:
+                      type: string
+                      maxLength: 64
+                      example: Asia/Almaty
+                    entries:
+                      type: array
+                      items:
+                        $ref: '../schemas/WorkingHoursEntry.yaml'
+                    closures:
+                      type: array
+                      description: Активные (в будущем) перекрытия расписания.
+                      items:
+                        $ref: '../schemas/ClubClosure.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              hours:
+                $ref: '../components/examples.yaml#/WorkingHoursExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/clubs/{clubId}/closures':
+  get:
+    tags:
+      - clubs
+    summary: Ближайшие закрытия (публично)
+    operationId: listPublicClubClosures
+    description: |
+      Публичный список перекрытий клуба, ещё не завершившихся. Показывается игрокам при выборе даты бронирования.
+    parameters:
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Перекрытия (в будущем).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ClubClosure.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              closures:
+                $ref: '../components/examples.yaml#/ClosureExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs':
+  post:
+    tags:
+      - clubs-admin
+    summary: Создать клуб
+    operationId: createClub
+    description: |-
+      Создаёт клуб организации в статусе `DRAFT`. До публикации клуб невидим в каталоге и недоступен для бронирования.
+
+      **Разрешение:** `club.manage` (ORG_OWNER, CLUB_ADMIN).
+
+      **Правила:**
+      - `slug` уникален в пределах организации → занят = `409 CLUB_SLUG_TAKEN`.
+      - Валютой по умолчанию наследуется валюта организации; клуб может переопределить.
+      - Политика бронирования наследуется из дефолтов организации; значения клуба — приоритетнее.
+
+      **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/IdempotencyKey'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubCreateRequest.yaml'
+          examples:
+            createClub:
+              $ref: '../components/examples.yaml#/ClubCreateExample'
+    responses:
+      '201':
+        description: Клуб создан (DRAFT).
+        headers:
+          Location:
+            description: URL созданного клуба.
+            schema:
+              type: string
+              format: uri-reference
+            example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f/clubs/8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              created:
+                $ref: '../components/examples.yaml#/ClubDetailExample'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+      '429':
+        $ref: '../components/responses.yaml#/TooManyRequests'
+
+  get:
+    tags:
+      - clubs-admin
+    summary: Список клубов организации
+    operationId: listOrganizationClubs
+    description: |
+      Все клубы организации (включая DRAFT/CLOSED). Фильтр по `status`. Для дашбордов и управления.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubStatusQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Клубы организации.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              list:
+                value:
+                  data:
+                    - id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+                      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                      name: Caspian Esports Almaty
+                      slug: caspian-almaty
+                      status: ACTIVE
+                      timezone: Asia/Almaty
+                      currency: KZT
+                      addressLine: пр. Достык 36, ТРЦ Mega
+                      city: Алматы
+                      countryCode: KZ
+                      defaultPriceMinor: '120000'
+                      reservationHorizonMinutes: 1440
+                      arrivalGraceMinutes: 10
+                      cancellationCutoffMinutes: 180
+                      createdAt: '2026-07-05T08:00:00Z'
+                      updatedAt: '2026-08-04T10:40:00Z'
+                  meta:
+                    page: 1
+                    pageSize: 20
+                    total: 1
+                    hasNextPage: false
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}':
+  get:
+    tags:
+      - clubs-admin
+    summary: Детали клуба (управляемый вид)
+    operationId: getClub
+    description: |
+      Полная карточка клуба с политикой бронирования и расписанием. CLUB_ADMIN видит клубы, где он привязан к clubId; ORG_OWNER — все клубы организации.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Детали клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              club:
+                $ref: '../components/examples.yaml#/ClubDetailExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  patch:
+    tags:
+      - clubs-admin
+    summary: Обновить клуб
+    operationId: updateClub
+    description: |-
+      Обновляет карточку и политику бронирования клуба.
+
+      **Разрешение:** `club.manage` (ORG_OWNER, CLUB_ADMIN своего клуба).
+
+      **Правила:**
+      - Смена `slug` — `409 CLUB_SLUG_TAKEN` при занятости.
+      - Смена политики не влияет на уже созданные брони.
+      - `status` через lifecycle endpoints (`publish`/`maintenance`/`reopen`/`close`), не здесь.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubUpdateRequest.yaml'
+          examples:
+            updateClub:
+              value:
+                name: Caspian Esports Almaty (главный)
+                defaultPriceMinor: '130000'
+    responses:
+      '200':
+        description: Клуб обновлён.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+  delete:
+    tags:
+      - clubs-admin
+    summary: Удалить клуб (черновик)
+    operationId: deleteDraftClub
+    description: |
+      Удаляет клуб только в статусе `DRAFT` (без расписания/броней). Для опубликованных клубов используется `close`. **Идемпотентность:** отсутствующий клуб — 404.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '204':
+        description: Клуб удалён.
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/organizations/{organizationId}/clubs/{clubId}/working-hours':
+  put:
+    tags:
+      - clubs-admin
+    summary: Заменить расписание клуба
+    operationId: replaceClubWorkingHours
+    description: |-
+      Полностью заменяет недельное расписание клуба (7 дней, один или несколько интервалов в день).
+
+      **Разрешение:** `club.manage`.
+
+      **Правила:**
+      - Пересечение интервалов одного дня = `422 WORKING_HOURS_OVERLAP`.
+      - `isClosed: true` игнорирует `opensAtLocal`/`closesAtLocal`.
+      - Изменение не отменяет существующие брони; время броней пересекающих расписание — на усмотрение админа.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/WorkingHoursUpdateRequest.yaml'
+            examples:
+              fullWeek:
+                value:
+                  entries:
+                    - dayOfWeek: 1
+                      opensAtLocal: '10:00'
+                      closesAtLocal: '02:00'
+                      closesNextDay: true
+                      isClosed: false
+                    - dayOfWeek: 2
+                      opensAtLocal: '10:00'
+                      closesAtLocal: '02:00'
+                      closesNextDay: true
+                      isClosed: false
+    responses:
+      '200':
+        description: Расписание обновлено.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: object
+                  properties:
+                    entries:
+                      type: array
+                      items:
+                        $ref: '../schemas/WorkingHoursEntry.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+  get:
+    tags:
+      - clubs-admin
+    summary: Расписание клуба
+    operationId: getClubWorkingHours
+    description: |
+      Управляемое недельное расписание клуба (с `id` интервалов для точечных изменений).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Расписание клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: object
+                  properties:
+                    entries:
+                      type: array
+                      items:
+                        $ref: '../schemas/WorkingHoursEntry.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+            examples:
+              hours:
+                $ref: '../components/examples.yaml#/WorkingHoursExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/closures':
+  post:
+    tags:
+      - clubs-admin
+    summary: Создать перекрытие расписания
+    operationId: createClubClosure
+    description: |-
+      Создаёт временное перекрытие (закрытие или специальные часы). Перекрытия приоритетнее недельного расписания.
+
+      **Разрешение:** `club.manage`.
+
+      **Правила:**
+      - Пересечение с активными бронями на время закрытия = `409 CLOSURE_CONFLICT` (админ решает: отменить брони и повторить).
+      - `MAINTENANCE`-перекрытие автоматически выставляет клубу `MAINTENANCE` на этот период (или переводит статус).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubClosureCreateRequest.yaml'
+          examples:
+            maintenance:
+              value:
+                startsAt: '2026-08-12T00:00:00Z'
+                endsAt: '2026-08-13T00:00:00Z'
+                closureType: MAINTENANCE
+                isClosed: true
+                reason: Профилактика оборудования
+    responses:
+      '201':
+        description: Перекрытие создано.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubClosure.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+  get:
+    tags:
+      - clubs-admin
+    summary: Перекрытия расписания клуба
+    operationId: listClubClosures
+    description: |
+      Список перекрытий клуба. Фильтр по `closureType`. По умолчанию — включая прошедшие (история).
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ClosureTypeQuery'
+      - $ref: '../components/parameters.yaml#/Page'
+      - $ref: '../components/parameters.yaml#/PageSize'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Перекрытия клуба.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/ClubClosure.yaml'
+                meta:
+                  $ref: '../schemas/PageMeta.yaml'
+            examples:
+              closures:
+                $ref: '../components/examples.yaml#/ClosureExample'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/closures/{closureId}':
+  delete:
+    tags:
+      - clubs-admin
+    summary: Удалить перекрытие
+    operationId: deleteClubClosure
+    description: |
+      Удаляет перекрытие. Если клуб находился в `MAINTENANCE` из-за этого перекрытия и нет других причин — возвращается в `ACTIVE`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ClosureId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '204':
+        description: Перекрытие удалено.
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+  get:
+    tags:
+      - clubs-admin
+    summary: Перекрытие по идентификатору
+    operationId: getClubClosure
+    description: Детали одного перекрытия расписания.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/ClosureId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    responses:
+      '200':
+        description: Перекрытие.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/ClubClosure.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+
+'/organizations/{organizationId}/clubs/{clubId}/publish':
+  post:
+    tags:
+      - clubs-admin
+    summary: Опубликовать клуб
+    operationId: publishClub
+    description: |-
+      `DRAFT` → `ACTIVE`: клуб появляется в каталоге и доступен для бронирования.
+
+      **Разрешение:** `club.manage`.
+
+      **Правила публикации:**
+      - Необходимы layout, хотя бы один resource и заполненное недельное расписание → иначе `422 CLUB_NOT_PUBLISHED`.
+      - У организации статус должен быть `ACTIVE`.
+      - Первая публикация заводит club-scoped конфигурацию бронирования.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubActionRequest.yaml'
+          examples:
+            publish:
+              value:
+                reason: Открытие после настройки
+    responses:
+      '200':
+        description: Клуб опубликован.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/maintenance':
+  post:
+    tags:
+      - clubs-admin
+    summary: Перевести клуб в обслуживание
+    operationId: maintenanceClub
+    description: |-
+      `ACTIVE` → `MAINTENANCE`: клуб скрывается из каталога, новые брони блокируются (`422 CLUB_MAINTENANCE`). Существующие брони сохраняются.
+
+      **Разрешение:** `club.manage`. Требуется причина; опционально `expectedEndAt`.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubActionRequest.yaml'
+          examples:
+            maintenance:
+              value:
+                reason: Замена видеокарт
+                expectedEndAt: '2026-08-15T18:00:00Z'
+    responses:
+      '200':
+        description: Клуб в обслуживании.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'
+
+'/organizations/{organizationId}/clubs/{clubId}/reopen':
+  post:
+    tags:
+      - clubs-admin
+    summary: Возобновить работу клуба
+    operationId: reopenClub
+    description: |
+      `MAINTENANCE`/`DRAFT` → `ACTIVE`. Восстанавливает видимость и бронирование. Для DRAFT требуется прохождение проверок публикации.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+                maxLength: 240
+            description: Опциональная причина возобновления.
+    responses:
+      '200':
+        description: Клуб возобновил работу.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '422':
+        $ref: '../components/responses.yaml#/UnprocessableEntity'
+
+'/organizations/{organizationId}/clubs/{clubId}/close':
+  post:
+    tags:
+      - clubs-admin
+    summary: Закрыть клуб
+    operationId: closeClub
+    description: |-
+      Мягко удаляет клуб (`ACTIVE`/`MAINTENANCE` → `CLOSED`). Клуб исчезает из каталога; бронирование недоступно.
+
+      **Правила:**
+      - Клуб с активными бронями в будущем = `409 CLUB_HAS_ACTIVE_RESERVATIONS`.
+      - Закрытый клуб нельзя восстановить (`reopen`); создание нового клуба.
+      - Требуется причина; фиксируется в audit log.
+    parameters:
+      - $ref: '../components/parameters.yaml#/OrganizationId'
+      - $ref: '../components/parameters.yaml#/ClubId'
+      - $ref: '../components/parameters.yaml#/CorrelationId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/ClubActionRequest.yaml'
+          examples:
+            close:
+              value:
+                reason: Закрытие филиала
+    responses:
+      '200':
+        description: Клуб закрыт.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, meta]
+              properties:
+                data:
+                  $ref: '../schemas/Club.yaml'
+                meta:
+                  $ref: '../schemas/RequestMeta.yaml'
+      '400':
+        $ref: '../components/responses.yaml#/BadRequest'
+      '401':
+        $ref: '../components/responses.yaml#/Unauthorized'
+      '403':
+        $ref: '../components/responses.yaml#/Forbidden'
+      '404':
+        $ref: '../components/responses.yaml#/NotFound'
+      '409':
+        $ref: '../components/responses.yaml#/Conflict'

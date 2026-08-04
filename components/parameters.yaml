@@ -320,3 +320,67 @@ SlugQuery:
     maxLength: 100
     pattern: '^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$'
   example: caspian-esports
+
+ClubId:
+  name: clubId
+  in: path
+  required: true
+  description: Идентификатор клуба (UUID).
+  schema:
+    type: string
+    format: uuid
+  example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+
+ClosureId:
+  name: closureId
+  in: path
+  required: true
+  description: Идентификатор временного перекрытия расписания (UUID).
+  schema:
+    type: string
+    format: uuid
+  example: 2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+
+ClubStatusQuery:
+  name: status
+  in: query
+  required: false
+  description: Фильтр клубов организации по статусу.
+  schema:
+    type: string
+    enum:
+      - DRAFT
+      - ACTIVE
+      - MAINTENANCE
+      - CLOSED
+  example: ACTIVE
+
+ClosureTypeQuery:
+  name: closureType
+  in: query
+  required: false
+  description: Фильтр перекрытий по типу.
+  schema:
+    $ref: '../schemas/ClosureType.yaml'
+  example: HOLIDAY
+
+CityQuery:
+  name: city
+  in: query
+  required: false
+  description: Фильтр публичного каталога по городу.
+  schema:
+    type: string
+    maxLength: 120
+  example: Алматы
+
+CountryCodeQuery:
+  name: countryCode
+  in: query
+  required: false
+  description: Фильтр публичного каталога по стране (ISO 3166-1 alpha-2).
+  schema:
+    type: string
+    maxLength: 2
+    pattern: '^[A-Z]{2}$'
+  example: KZ

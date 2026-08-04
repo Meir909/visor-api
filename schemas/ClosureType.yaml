@@ -1,0 +1,8 @@
+type: string
+description: Тип временного перекрытия расписания клуба.
+enum:
+  - MAINTENANCE
+  - HOLIDAY
+  - EMERGENCY
+  - SPECIAL_HOURS
+example: HOLIDAY

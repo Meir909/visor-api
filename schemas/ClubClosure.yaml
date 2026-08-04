@@ -1,0 +1,44 @@
+type: object
+description: Временное перекрытие расписания клуба (закрытие или специальные часы), приоритетнее недельных рабочих часов.
+required:
+  - id
+  - clubId
+  - startsAt
+  - endsAt
+  - closureType
+  - isClosed
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+  clubId:
+    type: string
+    format: uuid
+  startsAt:
+    type: string
+    format: date-time
+    description: Начало перекрытия.
+  endsAt:
+    type: string
+    format: date-time
+    description: Окончание перекрытия; должно быть позже `startsAt`.
+  closureType:
+    $ref: './ClosureType.yaml'
+  isClosed:
+    type: boolean
+    description: "`true` — закрытие; `false` — специальные часы работы (например, праздничное расширение)."
+  reason:
+    type: [string, 'null']
+    maxLength: 500
+    description: Причина (внутренняя/публичная).
+  createdByUserId:
+    type: [string, 'null']
+    format: uuid
+    description: Админ/владелец, создавший перекрытие.
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

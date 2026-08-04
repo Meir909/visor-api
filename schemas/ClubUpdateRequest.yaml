@@ -1,0 +1,47 @@
+type: object
+description: Обновление клуба. Незаполненные поля не изменяются. Изменения политики бронирования не применяются к уже существующим броням.
+properties:
+  name:
+    type: string
+    maxLength: 160
+  slug:
+    type: string
+    maxLength: 120
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,118}[a-z0-9])?$'
+  description:
+    type: string
+    maxLength: 2000
+  phoneE164:
+    type: [string, 'null']
+    maxLength: 20
+    pattern: '^\+[1-9]\d{1,14}$'
+  addressLine:
+    type: string
+    maxLength: 300
+  city:
+    type: string
+    maxLength: 120
+  latitude:
+    type: [number, 'null']
+    minimum: -90
+    maximum: 90
+  longitude:
+    type: [number, 'null']
+    minimum: -180
+    maximum: 180
+  defaultPriceMinor:
+    type: string
+    pattern: '^\d+$'
+    description: Базовая почасовая цена в minor units.
+  reservationHorizonMinutes:
+    type: integer
+    minimum: 1
+  arrivalGraceMinutes:
+    type: integer
+    minimum: 1
+  cancellationCutoffMinutes:
+    type: integer
+    minimum: 1
+  settings:
+    type: object
+    description: Клубные feature-флаги (deep merge).

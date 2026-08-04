@@ -17,7 +17,7 @@ info:
 
     ## Версия документа
 
-    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок) и **Organizations** (tenant lifecycle). Остальные модули (Clubs, Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
+    В версии `1.0.0` описаны модули **Reservations** (ядро платформы), **Auth** (аутентификация и сессии), **Roles** (RBAC: владелец → админ → игрок), **Organizations** (tenant lifecycle) и **Clubs** (каталог, карточка, расписание, перекрытия, жизненный цикл клуба). Остальные модули (Layout, Computers, Pricing, Notifications, Analytics, Admin, Owner, Provider) добавляются по мере реализации и не должны ломать описанные здесь контракты.
 
     ## Конвенции
 
@@ -463,7 +463,962 @@ tags:
       | Создать организацию | `organization.create` (любой аутентифицированный) |
       | Читать организацию | member организации (`membership` ACTIVE) |
       | Обновить, suspend, close | `organization.manage` (ORG_OWNER) |
+  - name: clubs
+    description: |-
+      # Клубы (Player / Public)
+
+      Публичный каталог клубов, карточка клуба, рабочее расписание и ближайшие перекрытия. Доступны только клубы со статусом `ACTIVE`.
+
+      **Жизненный цикл клуба:**
+
+      ```mermaid
+      stateDiagram-v2
+          [*] --> DRAFT: create (клуб организации)
+          DRAFT --> ACTIVE: publish (layout + resources + hours)
+          ACTIVE --> MAINTENANCE: maintenance (причина, аудит)
+          MAINTENANCE --> ACTIVE: reopen
+          ACTIVE --> CLOSED: close (soft-delete, необратимо)
+          MAINTENANCE --> CLOSED: close
+          DRAFT --> [*]: delete (черновик)
+          CLOSED --> [*]
+      ```
+
+      **Правила:**
+      - Клуб создаётся в `DRAFT` и невидим в каталоге до публикации.
+      - Публикация требует layout, хотя бы одного ресурса и заполненного расписания → иначе `422 CLUB_NOT_PUBLISHED`.
+      - `MAINTENANCE` скрывает клуб из каталога и блокирует новые брони (`CLUB_MAINTENANCE`).
+      - Перекрытия расписания (закрытия/специальные часы) приоритетнее недельного расписания.
+
+      ## Последовательность публикации
+
+      ```mermaid
+      sequenceDiagram
+          autonumber
+          participant O as Owner (Next.js)
+          participant API as Visora API
+          participant SVC as Club Service
+          participant DB as PostgreSQL
+
+          O->>API: POST /api/v1/organizations/{orgId}/clubs
+          API->>SVC: CreateClubCommand (DRAFT)
+          SVC->>SVC: validate slug unique in org
+          SVC->>DB: INSERT club (DRAFT)
+          API-->>O: 201 Created
+          O->>API: PUT .../clubs/{clubId}/working-hours
+          O->>API: POST .../clubs/{clubId}/publish
+          SVC->>SVC: check layout + resources + hours
+          SVC->>DB: DRAFT → ACTIVE + outbox
+          API-->>O: 200 Club (ACTIVE)
+      ```
+
+      ## Разрешения
+
+      | Действие | Permission / роль |
+      |---|---|
+      | Смотреть каталог/карточку | `clubs.read.public` (аутентифицированный) |
+      | Создать, обновить, publish, close | `club.manage` (ORG_OWNER, CLUB_ADMIN клуба) |
+      | Управлять расписанием и закрытиями | `club.manage` |
+  - name: clubs-admin
+    description: |-
+      # Клубы (Admin / Owner)
+
+      Управление клубами организации: создание, карточка, политика бронирования, недельное расписание, временные перекрытия и жизненный цикл.
+
+      **Разрешения:** `club.manage` — ORG_OWNER (все клубы) и CLUB_ADMIN (только назначенные clubId).
+
+      ## Пересечение перекрытия с бронями
+
+      ```mermaid
+      flowchart TD
+          C[POST .../closures] --> V{Перекрытие пересекает<br/>активные брони?}
+          V -- Да --> F[409 CLOSURE_CONFLICT]
+          V -- Нет --> A[201 Created<br/>+ MAINTENANCE при isClosed + MAINTENANCE]
+      ```
+
+      ## Проверка публикации
+
+      ```mermaid
+      flowchart TD
+          P[POST .../publish] --> L{Layout настроен?}
+          L -- No --> R1[422 CLUB_NOT_PUBLISHED]
+          L -- Yes --> R2{Есть ресурсы?}
+          R2 -- No --> R1
+          R2 -- Yes --> H{Расписание заполнено?}
+          H -- No --> R1
+          H -- Yes --> OK[DRAFT → ACTIVE + outbox]
+      ```
 paths:
+  /clubs:
+    get:
+      tags:
+        - clubs
+      summary: Публичный каталог клубов
+      operationId: listClubs
+      description: |-
+        Публичный поиск клубов. Возвращаются только `ACTIVE` клубы. Для игрока доступно без авторизации (витрина); фильтры по городу и стране.
+
+        **Правила:**
+        - Сортировка: по городу, затем по `name` (asc).
+        - `ACTIVE` + открыт сейчас — вверху списка (опционально `sortBy=popularity`).
+      parameters:
+        - $ref: '#/components/parameters/CityQuery'
+        - $ref: '#/components/parameters/CountryCodeQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список клубов.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClubSummary'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                catalog:
+                  $ref: '#/components/examples/ClubSummaryExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /clubs/{clubId}:
+    get:
+      tags:
+        - clubs
+      summary: Публичная карточка клуба
+      operationId: getPublicClub
+      description: |
+        Публичная карточка `ACTIVE` клуба: адрес, координаты, валюта, базовая цена, сегодняшнее окно работы. Политика бронирования не раскрывается.
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Карточка клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubSummary'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                club:
+                  $ref: '#/components/examples/ClubPublicExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /clubs/{clubId}/hours:
+    get:
+      tags:
+        - clubs
+      summary: Рабочие часы клуба (публично)
+      operationId: getPublicClubHours
+      description: |
+        Недельное расписание клуба и активные перекрытия (приоритетнее расписания). Используется витриной и мобильным приложением.
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Расписание и перекрытия.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      timezone:
+                        type: string
+                        maxLength: 64
+                        example: Asia/Almaty
+                      entries:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WorkingHoursEntry'
+                      closures:
+                        type: array
+                        description: Активные (в будущем) перекрытия расписания.
+                        items:
+                          $ref: '#/components/schemas/ClubClosure'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                hours:
+                  $ref: '#/components/examples/WorkingHoursExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /clubs/{clubId}/closures:
+    get:
+      tags:
+        - clubs
+      summary: Ближайшие закрытия (публично)
+      operationId: listPublicClubClosures
+      description: |
+        Публичный список перекрытий клуба, ещё не завершившихся. Показывается игрокам при выборе даты бронирования.
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Перекрытия (в будущем).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClubClosure'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                closures:
+                  $ref: '#/components/examples/ClosureExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs:
+    post:
+      tags:
+        - clubs-admin
+      summary: Создать клуб
+      operationId: createClub
+      description: |-
+        Создаёт клуб организации в статусе `DRAFT`. До публикации клуб невидим в каталоге и недоступен для бронирования.
+
+        **Разрешение:** `club.manage` (ORG_OWNER, CLUB_ADMIN).
+
+        **Правила:**
+        - `slug` уникален в пределах организации → занят = `409 CLUB_SLUG_TAKEN`.
+        - Валютой по умолчанию наследуется валюта организации; клуб может переопределить.
+        - Политика бронирования наследуется из дефолтов организации; значения клуба — приоритетнее.
+
+        **Идемпотентность:** заголовок `Idempotency-Key` (UUID).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubCreateRequest'
+            examples:
+              createClub:
+                $ref: '#/components/examples/ClubCreateExample'
+      responses:
+        '201':
+          description: Клуб создан (DRAFT).
+          headers:
+            Location:
+              description: URL созданного клуба.
+              schema:
+                type: string
+                format: uri-reference
+              example: /api/v1/organizations/4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f/clubs/8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                created:
+                  $ref: '#/components/examples/ClubDetailExample'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags:
+        - clubs-admin
+      summary: Список клубов организации
+      operationId: listOrganizationClubs
+      description: |
+        Все клубы организации (включая DRAFT/CLOSED). Фильтр по `status`. Для дашбордов и управления.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubStatusQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Клубы организации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                list:
+                  value:
+                    data:
+                      - id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+                        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+                        name: Caspian Esports Almaty
+                        slug: caspian-almaty
+                        status: ACTIVE
+                        timezone: Asia/Almaty
+                        currency: KZT
+                        addressLine: пр. Достык 36, ТРЦ Mega
+                        city: Алматы
+                        countryCode: KZ
+                        defaultPriceMinor: '120000'
+                        reservationHorizonMinutes: 1440
+                        arrivalGraceMinutes: 10
+                        cancellationCutoffMinutes: 180
+                        createdAt: '2026-07-05T08:00:00Z'
+                        updatedAt: '2026-08-04T10:40:00Z'
+                    meta:
+                      page: 1
+                      pageSize: 20
+                      total: 1
+                      hasNextPage: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}:
+    get:
+      tags:
+        - clubs-admin
+      summary: Детали клуба (управляемый вид)
+      operationId: getClub
+      description: |
+        Полная карточка клуба с политикой бронирования и расписанием. CLUB_ADMIN видит клубы, где он привязан к clubId; ORG_OWNER — все клубы организации.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Детали клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                club:
+                  $ref: '#/components/examples/ClubDetailExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - clubs-admin
+      summary: Обновить клуб
+      operationId: updateClub
+      description: |-
+        Обновляет карточку и политику бронирования клуба.
+
+        **Разрешение:** `club.manage` (ORG_OWNER, CLUB_ADMIN своего клуба).
+
+        **Правила:**
+        - Смена `slug` — `409 CLUB_SLUG_TAKEN` при занятости.
+        - Смена политики не влияет на уже созданные брони.
+        - `status` через lifecycle endpoints (`publish`/`maintenance`/`reopen`/`close`), не здесь.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubUpdateRequest'
+            examples:
+              updateClub:
+                value:
+                  name: Caspian Esports Almaty (главный)
+                  defaultPriceMinor: '130000'
+      responses:
+        '200':
+          description: Клуб обновлён.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+        - clubs-admin
+      summary: Удалить клуб (черновик)
+      operationId: deleteDraftClub
+      description: |
+        Удаляет клуб только в статусе `DRAFT` (без расписания/броней). Для опубликованных клубов используется `close`. **Идемпотентность:** отсутствующий клуб — 404.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Клуб удалён.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/clubs/{clubId}/working-hours:
+    put:
+      tags:
+        - clubs-admin
+      summary: Заменить расписание клуба
+      operationId: replaceClubWorkingHours
+      description: |-
+        Полностью заменяет недельное расписание клуба (7 дней, один или несколько интервалов в день).
+
+        **Разрешение:** `club.manage`.
+
+        **Правила:**
+        - Пересечение интервалов одного дня = `422 WORKING_HOURS_OVERLAP`.
+        - `isClosed: true` игнорирует `opensAtLocal`/`closesAtLocal`.
+        - Изменение не отменяет существующие брони; время броней пересекающих расписание — на усмотрение админа.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkingHoursUpdateRequest'
+              examples:
+                fullWeek:
+                  value:
+                    entries:
+                      - dayOfWeek: 1
+                        opensAtLocal: '10:00'
+                        closesAtLocal: '02:00'
+                        closesNextDay: true
+                        isClosed: false
+                      - dayOfWeek: 2
+                        opensAtLocal: '10:00'
+                        closesAtLocal: '02:00'
+                        closesNextDay: true
+                        isClosed: false
+      responses:
+        '200':
+          description: Расписание обновлено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      entries:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WorkingHoursEntry'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags:
+        - clubs-admin
+      summary: Расписание клуба
+      operationId: getClubWorkingHours
+      description: |
+        Управляемое недельное расписание клуба (с `id` интервалов для точечных изменений).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Расписание клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      entries:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WorkingHoursEntry'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+              examples:
+                hours:
+                  $ref: '#/components/examples/WorkingHoursExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/closures:
+    post:
+      tags:
+        - clubs-admin
+      summary: Создать перекрытие расписания
+      operationId: createClubClosure
+      description: |-
+        Создаёт временное перекрытие (закрытие или специальные часы). Перекрытия приоритетнее недельного расписания.
+
+        **Разрешение:** `club.manage`.
+
+        **Правила:**
+        - Пересечение с активными бронями на время закрытия = `409 CLOSURE_CONFLICT` (админ решает: отменить брони и повторить).
+        - `MAINTENANCE`-перекрытие автоматически выставляет клубу `MAINTENANCE` на этот период (или переводит статус).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubClosureCreateRequest'
+            examples:
+              maintenance:
+                value:
+                  startsAt: '2026-08-12T00:00:00Z'
+                  endsAt: '2026-08-13T00:00:00Z'
+                  closureType: MAINTENANCE
+                  isClosed: true
+                  reason: Профилактика оборудования
+      responses:
+        '201':
+          description: Перекрытие создано.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubClosure'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags:
+        - clubs-admin
+      summary: Перекрытия расписания клуба
+      operationId: listClubClosures
+      description: |
+        Список перекрытий клуба. Фильтр по `closureType`. По умолчанию — включая прошедшие (история).
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ClosureTypeQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Перекрытия клуба.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClubClosure'
+                  meta:
+                    $ref: '#/components/schemas/PageMeta'
+              examples:
+                closures:
+                  $ref: '#/components/examples/ClosureExample'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/closures/{closureId}:
+    delete:
+      tags:
+        - clubs-admin
+      summary: Удалить перекрытие
+      operationId: deleteClubClosure
+      description: |
+        Удаляет перекрытие. Если клуб находился в `MAINTENANCE` из-за этого перекрытия и нет других причин — возвращается в `ACTIVE`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ClosureId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Перекрытие удалено.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      tags:
+        - clubs-admin
+      summary: Перекрытие по идентификатору
+      operationId: getClubClosure
+      description: Детали одного перекрытия расписания.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/ClosureId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Перекрытие.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClubClosure'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations/{organizationId}/clubs/{clubId}/publish:
+    post:
+      tags:
+        - clubs-admin
+      summary: Опубликовать клуб
+      operationId: publishClub
+      description: |-
+        `DRAFT` → `ACTIVE`: клуб появляется в каталоге и доступен для бронирования.
+
+        **Разрешение:** `club.manage`.
+
+        **Правила публикации:**
+        - Необходимы layout, хотя бы один resource и заполненное недельное расписание → иначе `422 CLUB_NOT_PUBLISHED`.
+        - У организации статус должен быть `ACTIVE`.
+        - Первая публикация заводит club-scoped конфигурацию бронирования.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubActionRequest'
+            examples:
+              publish:
+                value:
+                  reason: Открытие после настройки
+      responses:
+        '200':
+          description: Клуб опубликован.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/maintenance:
+    post:
+      tags:
+        - clubs-admin
+      summary: Перевести клуб в обслуживание
+      operationId: maintenanceClub
+      description: |-
+        `ACTIVE` → `MAINTENANCE`: клуб скрывается из каталога, новые брони блокируются (`422 CLUB_MAINTENANCE`). Существующие брони сохраняются.
+
+        **Разрешение:** `club.manage`. Требуется причина; опционально `expectedEndAt`.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubActionRequest'
+            examples:
+              maintenance:
+                value:
+                  reason: Замена видеокарт
+                  expectedEndAt: '2026-08-15T18:00:00Z'
+      responses:
+        '200':
+          description: Клуб в обслуживании.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /organizations/{organizationId}/clubs/{clubId}/reopen:
+    post:
+      tags:
+        - clubs-admin
+      summary: Возобновить работу клуба
+      operationId: reopenClub
+      description: |
+        `MAINTENANCE`/`DRAFT` → `ACTIVE`. Восстанавливает видимость и бронирование. Для DRAFT требуется прохождение проверок публикации.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 240
+              description: Опциональная причина возобновления.
+      responses:
+        '200':
+          description: Клуб возобновил работу.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /organizations/{organizationId}/clubs/{clubId}/close:
+    post:
+      tags:
+        - clubs-admin
+      summary: Закрыть клуб
+      operationId: closeClub
+      description: |-
+        Мягко удаляет клуб (`ACTIVE`/`MAINTENANCE` → `CLOSED`). Клуб исчезает из каталога; бронирование недоступно.
+
+        **Правила:**
+        - Клуб с активными бронями в будущем = `409 CLUB_HAS_ACTIVE_RESERVATIONS`.
+        - Закрытый клуб нельзя восстановить (`reopen`); создание нового клуба.
+        - Требуется причина; фиксируется в audit log.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClubActionRequest'
+            examples:
+              close:
+                value:
+                  reason: Закрытие филиала
+      responses:
+        '200':
+          description: Клуб закрыт.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Club'
+                  meta:
+                    $ref: '#/components/schemas/RequestMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /organizations:
     post:
       tags:
@@ -3331,6 +4286,16 @@ components:
         - ORGANIZATION_SUSPENDED
         - ORGANIZATION_CLOSED
         - INVALID_SLUG
+        - CLUB_NOT_FOUND
+        - CLUB_SLUG_TAKEN
+        - CLUB_NOT_PUBLISHED
+        - CLUB_MAINTENANCE
+        - CLUB_CLOSED
+        - CLUB_HAS_ACTIVE_RESERVATIONS
+        - WORKING_HOURS_OVERLAP
+        - INVALID_WORKING_HOURS
+        - CLOSURE_NOT_FOUND
+        - CLOSURE_CONFLICT
     PageMeta:
       type: object
       description: Метаданные пагинации для списочных ответов.
@@ -5425,6 +6390,479 @@ components:
             - 'null'
           maxLength: 100
           description: Рекомендуемая альтернатива, если занят.
+    ClubStatus:
+      type: string
+      description: Статус клуба. `DRAFT` не публикуется; `ACTIVE` доступен игрокам; `MAINTENANCE` блокирует новые брони; `CLOSED` — soft-delete.
+      enum:
+        - DRAFT
+        - ACTIVE
+        - MAINTENANCE
+        - CLOSED
+      example: ACTIVE
+    Club:
+      type: object
+      description: Полная карточка клуба (управляемый вид, CLUB_ADMIN/ORG_OWNER) с реквизитами и политикой бронирования.
+      required:
+        - id
+        - organizationId
+        - name
+        - slug
+        - status
+        - timezone
+        - currency
+        - addressLine
+        - city
+        - countryCode
+        - defaultPriceMinor
+        - reservationHorizonMinutes
+        - arrivalGraceMinutes
+        - cancellationCutoffMinutes
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+          description: Владеющий tenant; неизменяем после активации.
+        name:
+          type: string
+          maxLength: 160
+          description: Публичное название клуба.
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,118}[a-z0-9])?$
+          description: URL-safe идентификатор, уникальный в пределах организации.
+        description:
+          type:
+            - string
+            - 'null'
+          description: Публичное описание.
+        status:
+          $ref: '#/components/schemas/ClubStatus'
+        timezone:
+          type: string
+          maxLength: 64
+          description: IANA time zone клуба.
+          example: Asia/Almaty
+        currency:
+          type: string
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          description: Валюта цен клуба (ISO 4217).
+          example: KZT
+        phoneE164:
+          type:
+            - string
+            - 'null'
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+          description: Контактный телефон.
+        addressLine:
+          type: string
+          maxLength: 300
+          description: Отображаемый адрес.
+          example: пр. Достык 36, ТРЦ Mega
+        city:
+          type: string
+          maxLength: 120
+          example: Алматы
+        countryCode:
+          type: string
+          maxLength: 2
+          pattern: ^[A-Z]{2}$
+          description: ISO 3166-1 alpha-2.
+          example: KZ
+        latitude:
+          type:
+            - number
+            - 'null'
+          minimum: -90
+          maximum: 90
+          description: Широта; задаётся вместе с longitude.
+          example: 43.238293
+        longitude:
+          type:
+            - number
+            - 'null'
+          minimum: -180
+          maximum: 180
+          description: Долгота.
+          example: 76.945465
+        defaultPriceMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Базовая почасовая цена в minor units (строка, чтобы не терять точность). Например `"120000"` = 1 200 ₸/час.
+          example: '120000'
+        reservationHorizonMinutes:
+          type: integer
+          minimum: 1
+          description: Горизонт бронирования вперёд (MVP default 1 440 = 24 часа).
+          example: 1440
+        arrivalGraceMinutes:
+          type: integer
+          minimum: 1
+          description: Grace-период неявки после начала (MVP default 10).
+          example: 10
+        cancellationCutoffMinutes:
+          type: integer
+          minimum: 1
+          description: За сколько до начала можно отменить бронь без штрафа (MVP default 180).
+          example: 180
+        settings:
+          type: object
+          description: Клубные feature-флаги и конфигурация (jsonb).
+          example:
+            requireDepositForNewPlayers: true
+        workingHours:
+          type: array
+          description: Недельное расписание (управляемый вид).
+          items:
+            $ref: '#/components/schemas/WorkingHoursEntry'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ClubSummary:
+      type: object
+      description: Краткая публичная карточка клуба для каталога (только ACTIVE).
+      required:
+        - id
+        - name
+        - slug
+        - city
+        - countryCode
+        - timezone
+        - currency
+        - defaultPriceMinor
+        - addressLine
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 160
+        slug:
+          type: string
+          maxLength: 120
+        description:
+          type:
+            - string
+            - 'null'
+        city:
+          type: string
+          maxLength: 120
+        countryCode:
+          type: string
+          maxLength: 2
+        timezone:
+          type: string
+          maxLength: 64
+        currency:
+          type: string
+          maxLength: 3
+        defaultPriceMinor:
+          type: string
+          pattern: ^-?\d+$
+          description: Базовая почасовая цена в minor units.
+        addressLine:
+          type: string
+          maxLength: 300
+        status:
+          $ref: '#/components/schemas/ClubStatus'
+        opensTodayAtLocal:
+          type:
+            - string
+            - 'null'
+          pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
+          description: Время открытия сегодня (локальное) для витрины.
+    ClubCreateRequest:
+      type: object
+      description: Создание клуба. Клуб создаётся в статусе `DRAFT`; публикация — отдельный шаг (требует layout, ресурсов и расписания).
+      required:
+        - name
+        - slug
+        - timezone
+        - currency
+        - addressLine
+        - city
+        - countryCode
+        - defaultPriceMinor
+      properties:
+        name:
+          type: string
+          maxLength: 160
+          example: Caspian Esports Almaty
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,118}[a-z0-9])?$
+          description: Уникален в пределах организации → занят = `409 CLUB_SLUG_TAKEN`.
+          example: caspian-almaty
+        description:
+          type: string
+          maxLength: 2000
+        timezone:
+          type: string
+          maxLength: 64
+          example: Asia/Almaty
+        currency:
+          type: string
+          maxLength: 3
+          pattern: ^[A-Z]{3}$
+          example: KZT
+        phoneE164:
+          type: string
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+        addressLine:
+          type: string
+          maxLength: 300
+        city:
+          type: string
+          maxLength: 120
+        countryCode:
+          type: string
+          maxLength: 2
+          pattern: ^[A-Z]{2}$
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        defaultPriceMinor:
+          type: string
+          pattern: ^\d+$
+          description: Базовая почасовая цена в minor units.
+          example: '120000'
+        reservationHorizonMinutes:
+          type: integer
+          minimum: 1
+          default: 1440
+        arrivalGraceMinutes:
+          type: integer
+          minimum: 1
+          default: 10
+        cancellationCutoffMinutes:
+          type: integer
+          minimum: 1
+          default: 180
+    ClubUpdateRequest:
+      type: object
+      description: Обновление клуба. Незаполненные поля не изменяются. Изменения политики бронирования не применяются к уже существующим броням.
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[a-z0-9](?:[a-z0-9-]{1,118}[a-z0-9])?$
+        description:
+          type: string
+          maxLength: 2000
+        phoneE164:
+          type:
+            - string
+            - 'null'
+          maxLength: 20
+          pattern: ^\+[1-9]\d{1,14}$
+        addressLine:
+          type: string
+          maxLength: 300
+        city:
+          type: string
+          maxLength: 120
+        latitude:
+          type:
+            - number
+            - 'null'
+          minimum: -90
+          maximum: 90
+        longitude:
+          type:
+            - number
+            - 'null'
+          minimum: -180
+          maximum: 180
+        defaultPriceMinor:
+          type: string
+          pattern: ^\d+$
+          description: Базовая почасовая цена в minor units.
+        reservationHorizonMinutes:
+          type: integer
+          minimum: 1
+        arrivalGraceMinutes:
+          type: integer
+          minimum: 1
+        cancellationCutoffMinutes:
+          type: integer
+          minimum: 1
+        settings:
+          type: object
+          description: Клубные feature-флаги (deep merge).
+    WorkingHoursEntry:
+      type: object
+      description: Интервал рабочих часов клуба в недельном расписании (normalized recurring opening).
+      required:
+        - dayOfWeek
+        - opensAtLocal
+        - closesAtLocal
+        - closesNextDay
+        - isClosed
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор интервала (управляемый вид).
+        dayOfWeek:
+          type: integer
+          minimum: 1
+          maximum: 7
+          description: 'ISO-номер дня: 1 — понедельник … 7 — воскресенье.'
+          example: 1
+        opensAtLocal:
+          type: string
+          pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
+          description: Время открытия (локальное, HH:MM).
+          example: '10:00'
+        closesAtLocal:
+          type: string
+          pattern: ^(?:[01]\d|2[0-3]):[0-5]\d$
+          description: Время закрытия (локальное, HH:MM).
+          example: '02:00'
+        closesNextDay:
+          type: boolean
+          description: Пересекает ли интервал полночь (закрытие на следующий день).
+          default: false
+        isClosed:
+          type: boolean
+          description: День/интервал отмечен как закрытый (не интерпретировать как открытый).
+          default: false
+    WorkingHoursUpdateRequest:
+      type: object
+      description: Полная замена недельного расписания клубов. Интервалы одного дня не должны пересекаться.
+      required:
+        - entries
+      properties:
+        entries:
+          type: array
+          description: Набор интервалов (несколько в день допустимы для перерывов).
+          items:
+            $ref: '#/components/schemas/WorkingHoursEntry'
+    ClosureType:
+      type: string
+      description: Тип временного перекрытия расписания клуба.
+      enum:
+        - MAINTENANCE
+        - HOLIDAY
+        - EMERGENCY
+        - SPECIAL_HOURS
+      example: HOLIDAY
+    ClubClosure:
+      type: object
+      description: Временное перекрытие расписания клуба (закрытие или специальные часы), приоритетнее недельных рабочих часов.
+      required:
+        - id
+        - clubId
+        - startsAt
+        - endsAt
+        - closureType
+        - isClosed
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clubId:
+          type: string
+          format: uuid
+        startsAt:
+          type: string
+          format: date-time
+          description: Начало перекрытия.
+        endsAt:
+          type: string
+          format: date-time
+          description: Окончание перекрытия; должно быть позже `startsAt`.
+        closureType:
+          $ref: '#/components/schemas/ClosureType'
+        isClosed:
+          type: boolean
+          description: '`true` — закрытие; `false` — специальные часы работы (например, праздничное расширение).'
+        reason:
+          type:
+            - string
+            - 'null'
+          maxLength: 500
+          description: Причина (внутренняя/публичная).
+        createdByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Админ/владелец, создавший перекрытие.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ClubClosureCreateRequest:
+      type: object
+      description: Создание временного перекрытия расписания клуба.
+      required:
+        - startsAt
+        - endsAt
+        - closureType
+        - isClosed
+      properties:
+        startsAt:
+          type: string
+          format: date-time
+          description: Начало перекрытия.
+        endsAt:
+          type: string
+          format: date-time
+          description: Окончание перекрытия; `endsAt > startsAt`.
+        closureType:
+          $ref: '#/components/schemas/ClosureType'
+        isClosed:
+          type: boolean
+          description: '`true` — закрытие; `false` — специальные часы работы.'
+        reason:
+          type: string
+          maxLength: 500
+          description: Причина.
+    ClubActionRequest:
+      type: object
+      description: Действие жизненного цикла клуба (publish/maintenance/reopen/close). Для maintenance/close требуется причина.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          maxLength: 240
+          description: Причина действия; аудируется.
+        expectedEndAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Ожидаемое завершение (для `MAINTENANCE`); необязательно.
   parameters:
     ReservationId:
       name: reservationId
@@ -5717,6 +7155,64 @@ components:
         maxLength: 100
         pattern: ^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$
       example: caspian-esports
+    ClubId:
+      name: clubId
+      in: path
+      required: true
+      description: Идентификатор клуба (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+    ClosureId:
+      name: closureId
+      in: path
+      required: true
+      description: Идентификатор временного перекрытия расписания (UUID).
+      schema:
+        type: string
+        format: uuid
+      example: 2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+    ClubStatusQuery:
+      name: status
+      in: query
+      required: false
+      description: Фильтр клубов организации по статусу.
+      schema:
+        type: string
+        enum:
+          - DRAFT
+          - ACTIVE
+          - MAINTENANCE
+          - CLOSED
+      example: ACTIVE
+    ClosureTypeQuery:
+      name: closureType
+      in: query
+      required: false
+      description: Фильтр перекрытий по типу.
+      schema:
+        $ref: '#/components/schemas/ClosureType'
+      example: HOLIDAY
+    CityQuery:
+      name: city
+      in: query
+      required: false
+      description: Фильтр публичного каталога по городу.
+      schema:
+        type: string
+        maxLength: 120
+      example: Алматы
+    CountryCodeQuery:
+      name: countryCode
+      in: query
+      required: false
+      description: Фильтр публичного каталога по стране (ISO 3166-1 alpha-2).
+      schema:
+        type: string
+        maxLength: 2
+        pattern: ^[A-Z]{2}$
+      example: KZ
   responses:
     BadRequest:
       description: Некорректный запрос — невалидная схема, нарушение формата или ограничений полей.
@@ -6431,3 +7927,172 @@ components:
           slug: caspian-esports
           available: false
           suggestion: caspian-esports-2
+    ClubSummaryExample:
+      summary: Публичный каталог клубов
+      value:
+        data:
+          - id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            name: Caspian Esports Almaty
+            slug: caspian-almaty
+            description: Киберспортивная арена в центре Алматы
+            city: Алматы
+            countryCode: KZ
+            timezone: Asia/Almaty
+            currency: KZT
+            defaultPriceMinor: '120000'
+            addressLine: пр. Достык 36, ТРЦ Mega
+            status: ACTIVE
+            opensTodayAtLocal: '10:00'
+          - id: 9e8f7a6b-5c4d-4e3f-8a2b-3c4d5e6f7a8b
+            organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+            name: Caspian Esports Astana
+            slug: caspian-astana
+            city: Астана
+            countryCode: KZ
+            timezone: Asia/Almaty
+            currency: KZT
+            defaultPriceMinor: '100000'
+            addressLine: пр. Мәңгілік Ел 55
+            status: ACTIVE
+            opensTodayAtLocal: '09:00'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 2
+          hasNextPage: false
+    ClubPublicExample:
+      summary: Публичная карточка клуба
+      value:
+        data:
+          id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          name: Caspian Esports Almaty
+          slug: caspian-almaty
+          description: Киберспортивная арена в центре Алматы
+          city: Алматы
+          countryCode: KZ
+          timezone: Asia/Almaty
+          currency: KZT
+          defaultPriceMinor: '120000'
+          addressLine: пр. Достык 36, ТРЦ Mega
+          status: ACTIVE
+          opensTodayAtLocal: '10:00'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ClubDetailExample:
+      summary: Клуб (управляемый вид с политикой и расписанием)
+      value:
+        data:
+          id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+          organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+          name: Caspian Esports Almaty
+          slug: caspian-almaty
+          description: Киберспортивная арена в центре Алматы
+          status: ACTIVE
+          timezone: Asia/Almaty
+          currency: KZT
+          phoneE164: '+77010001020'
+          addressLine: пр. Достык 36, ТРЦ Mega
+          city: Алматы
+          countryCode: KZ
+          latitude: 43.238293
+          longitude: 76.945465
+          defaultPriceMinor: '120000'
+          reservationHorizonMinutes: 1440
+          arrivalGraceMinutes: 10
+          cancellationCutoffMinutes: 180
+          settings:
+            requireDepositForNewPlayers: true
+          workingHours:
+            - id: 3b2a1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+              dayOfWeek: 1
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+            - id: 4c3b2d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e
+              dayOfWeek: 2
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+          createdAt: '2026-07-05T08:00:00Z'
+          updatedAt: '2026-08-04T10:40:00Z'
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ClubCreateExample:
+      summary: Создание клуба (DRAFT)
+      value:
+        name: Caspian Esports Almaty
+        slug: caspian-almaty
+        timezone: Asia/Almaty
+        currency: KZT
+        addressLine: пр. Достык 36, ТРЦ Mega
+        city: Алматы
+        countryCode: KZ
+        defaultPriceMinor: '120000'
+    WorkingHoursExample:
+      summary: Недельное расписание клуба
+      value:
+        data:
+          entries:
+            - dayOfWeek: 1
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+            - dayOfWeek: 2
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+            - dayOfWeek: 3
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+            - dayOfWeek: 4
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+            - dayOfWeek: 5
+              opensAtLocal: '10:00'
+              closesAtLocal: '02:00'
+              closesNextDay: true
+              isClosed: false
+            - dayOfWeek: 6
+              opensAtLocal: '12:00'
+              closesAtLocal: '04:00'
+              closesNextDay: true
+              isClosed: false
+            - dayOfWeek: 7
+              opensAtLocal: '12:00'
+              closesAtLocal: '04:00'
+              closesNextDay: true
+              isClosed: false
+        meta:
+          requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+          timestamp: '2026-08-04T10:40:00Z'
+    ClosureExample:
+      summary: Перекрытия расписания (список)
+      value:
+        data:
+          - id: 2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+            clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+            startsAt: '2026-08-12T00:00:00Z'
+            endsAt: '2026-08-13T00:00:00Z'
+            closureType: MAINTENANCE
+            isClosed: true
+            reason: Профилактика оборудования
+            createdByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+            createdAt: '2026-08-10T09:00:00Z'
+            updatedAt: '2026-08-10T09:00:00Z'
+        meta:
+          page: 1
+          pageSize: 20
+          total: 1
+          hasNextPage: false

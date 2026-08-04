@@ -623,3 +623,178 @@ SlugAvailabilityExample:
       slug: caspian-esports
       available: false
       suggestion: caspian-esports-2
+
+ClubSummaryExample:
+  summary: Публичный каталог клубов
+  value:
+    data:
+      - id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        name: Caspian Esports Almaty
+        slug: caspian-almaty
+        description: Киберспортивная арена в центре Алматы
+        city: Алматы
+        countryCode: KZ
+        timezone: Asia/Almaty
+        currency: KZT
+        defaultPriceMinor: '120000'
+        addressLine: пр. Достык 36, ТРЦ Mega
+        status: ACTIVE
+        opensTodayAtLocal: '10:00'
+      - id: 9e8f7a6b-5c4d-4e3f-8a2b-3c4d5e6f7a8b
+        organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+        name: Caspian Esports Astana
+        slug: caspian-astana
+        city: Астана
+        countryCode: KZ
+        timezone: Asia/Almaty
+        currency: KZT
+        defaultPriceMinor: '100000'
+        addressLine: пр. Мәңгілік Ел 55
+        status: ACTIVE
+        opensTodayAtLocal: '09:00'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 2
+      hasNextPage: false
+
+ClubPublicExample:
+  summary: Публичная карточка клуба
+  value:
+    data:
+      id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      name: Caspian Esports Almaty
+      slug: caspian-almaty
+      description: Киберспортивная арена в центре Алматы
+      city: Алматы
+      countryCode: KZ
+      timezone: Asia/Almaty
+      currency: KZT
+      defaultPriceMinor: '120000'
+      addressLine: пр. Достык 36, ТРЦ Mega
+      status: ACTIVE
+      opensTodayAtLocal: '10:00'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:40:00Z'
+
+ClubDetailExample:
+  summary: Клуб (управляемый вид с политикой и расписанием)
+  value:
+    data:
+      id: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+      organizationId: 4b1c9d8e-1a2b-4c3d-9e8f-7a6b5c4d3e2f
+      name: Caspian Esports Almaty
+      slug: caspian-almaty
+      description: Киберспортивная арена в центре Алматы
+      status: ACTIVE
+      timezone: Asia/Almaty
+      currency: KZT
+      phoneE164: '+77010001020'
+      addressLine: пр. Достык 36, ТРЦ Mega
+      city: Алматы
+      countryCode: KZ
+      latitude: 43.238293
+      longitude: 76.945465
+      defaultPriceMinor: '120000'
+      reservationHorizonMinutes: 1440
+      arrivalGraceMinutes: 10
+      cancellationCutoffMinutes: 180
+      settings:
+        requireDepositForNewPlayers: true
+      workingHours:
+        - id: 3b2a1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+          dayOfWeek: 1
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+        - id: 4c3b2d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e
+          dayOfWeek: 2
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+      createdAt: '2026-07-05T08:00:00Z'
+      updatedAt: '2026-08-04T10:40:00Z'
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:40:00Z'
+
+ClubCreateExample:
+  summary: Создание клуба (DRAFT)
+  value:
+    name: Caspian Esports Almaty
+    slug: caspian-almaty
+    timezone: Asia/Almaty
+    currency: KZT
+    addressLine: пр. Достык 36, ТРЦ Mega
+    city: Алматы
+    countryCode: KZ
+    defaultPriceMinor: '120000'
+
+WorkingHoursExample:
+  summary: Недельное расписание клуба
+  value:
+    data:
+      entries:
+        - dayOfWeek: 1
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+        - dayOfWeek: 2
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+        - dayOfWeek: 3
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+        - dayOfWeek: 4
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+        - dayOfWeek: 5
+          opensAtLocal: '10:00'
+          closesAtLocal: '02:00'
+          closesNextDay: true
+          isClosed: false
+        - dayOfWeek: 6
+          opensAtLocal: '12:00'
+          closesAtLocal: '04:00'
+          closesNextDay: true
+          isClosed: false
+        - dayOfWeek: 7
+          opensAtLocal: '12:00'
+          closesAtLocal: '04:00'
+          closesNextDay: true
+          isClosed: false
+    meta:
+      requestId: 4b1c9d8e-2f3a-4b5c-8d6e-7f8a9b0c1d2e
+      timestamp: '2026-08-04T10:40:00Z'
+
+ClosureExample:
+  summary: Перекрытия расписания (список)
+  value:
+    data:
+      - id: 2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f
+        clubId: 8d7e6f5a-4b3c-4d2e-9f1a-2b3c4d5e6f7a
+        startsAt: '2026-08-12T00:00:00Z'
+        endsAt: '2026-08-13T00:00:00Z'
+        closureType: MAINTENANCE
+        isClosed: true
+        reason: Профилактика оборудования
+        createdByUserId: 5a4b3c2d-1e2f-4a3b-8c7d-6e5f4a3b2c1d
+        createdAt: '2026-08-10T09:00:00Z'
+        updatedAt: '2026-08-10T09:00:00Z'
+    meta:
+      page: 1
+      pageSize: 20
+      total: 1
+      hasNextPage: false

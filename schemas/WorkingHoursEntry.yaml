@@ -1,0 +1,37 @@
+type: object
+description: Интервал рабочих часов клуба в недельном расписании (normalized recurring opening).
+required:
+  - dayOfWeek
+  - opensAtLocal
+  - closesAtLocal
+  - closesNextDay
+  - isClosed
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор интервала (управляемый вид).
+  dayOfWeek:
+    type: integer
+    minimum: 1
+    maximum: 7
+    description: "ISO-номер дня: 1 — понедельник … 7 — воскресенье."
+    example: 1
+  opensAtLocal:
+    type: string
+    pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$'
+    description: Время открытия (локальное, HH:MM).
+    example: '10:00'
+  closesAtLocal:
+    type: string
+    pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$'
+    description: Время закрытия (локальное, HH:MM).
+    example: '02:00'
+  closesNextDay:
+    type: boolean
+    description: Пересекает ли интервал полночь (закрытие на следующий день).
+    default: false
+  isClosed:
+    type: boolean
+    description: День/интервал отмечен как закрытый (не интерпретировать как открытый).
+    default: false

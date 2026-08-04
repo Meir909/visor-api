@@ -1,0 +1,73 @@
+type: object
+description: Создание клуба. Клуб создаётся в статусе `DRAFT`; публикация — отдельный шаг (требует layout, ресурсов и расписания).
+required:
+  - name
+  - slug
+  - timezone
+  - currency
+  - addressLine
+  - city
+  - countryCode
+  - defaultPriceMinor
+properties:
+  name:
+    type: string
+    maxLength: 160
+    example: Caspian Esports Almaty
+  slug:
+    type: string
+    maxLength: 120
+    pattern: '^[a-z0-9](?:[a-z0-9-]{1,118}[a-z0-9])?$'
+    description: Уникален в пределах организации → занят = `409 CLUB_SLUG_TAKEN`.
+    example: caspian-almaty
+  description:
+    type: string
+    maxLength: 2000
+  timezone:
+    type: string
+    maxLength: 64
+    example: Asia/Almaty
+  currency:
+    type: string
+    maxLength: 3
+    pattern: '^[A-Z]{3}$'
+    example: KZT
+  phoneE164:
+    type: string
+    maxLength: 20
+    pattern: '^\+[1-9]\d{1,14}$'
+  addressLine:
+    type: string
+    maxLength: 300
+  city:
+    type: string
+    maxLength: 120
+  countryCode:
+    type: string
+    maxLength: 2
+    pattern: '^[A-Z]{2}$'
+  latitude:
+    type: number
+    minimum: -90
+    maximum: 90
+  longitude:
+    type: number
+    minimum: -180
+    maximum: 180
+  defaultPriceMinor:
+    type: string
+    pattern: '^\d+$'
+    description: Базовая почасовая цена в minor units.
+    example: '120000'
+  reservationHorizonMinutes:
+    type: integer
+    minimum: 1
+    default: 1440
+  arrivalGraceMinutes:
+    type: integer
+    minimum: 1
+    default: 10
+  cancellationCutoffMinutes:
+    type: integer
+    minimum: 1
+    default: 180

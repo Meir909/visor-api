@@ -1,0 +1,25 @@
+type: object
+description: Создание временного перекрытия расписания клуба.
+required:
+  - startsAt
+  - endsAt
+  - closureType
+  - isClosed
+properties:
+  startsAt:
+    type: string
+    format: date-time
+    description: Начало перекрытия.
+  endsAt:
+    type: string
+    format: date-time
+    description: Окончание перекрытия; `endsAt > startsAt`.
+  closureType:
+    $ref: './ClosureType.yaml'
+  isClosed:
+    type: boolean
+    description: "`true` — закрытие; `false` — специальные часы работы."
+  reason:
+    type: string
+    maxLength: 500
+    description: Причина.

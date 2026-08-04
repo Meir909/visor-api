@@ -1,0 +1,10 @@
+type: object
+description: Полная замена недельного расписания клубов. Интервалы одного дня не должны пересекаться.
+required:
+  - entries
+properties:
+  entries:
+    type: array
+    description: Набор интервалов (несколько в день допустимы для перерывов).
+    items:
+      $ref: './WorkingHoursEntry.yaml'
